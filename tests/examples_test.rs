@@ -63,6 +63,10 @@ const EXPECTED_EXIT: &[(&str, i32)] = &[
     // to a loop (guaranteed TCO). 1_000_000 mod 251 = 16.
     ("tail_recursion.ql", 16),
     ("closures.ql", 42),
+    // `^(args :: []Text, env :: [][]Text)`. Exit is invocation-independent (argv[0] is
+    // always present, env size is always non-negative), so the JIT and native AOT — run
+    // with different argv — must agree on 7.
+    ("args.ql", 7),
 ];
 
 fn ql_files() -> Vec<PathBuf> {

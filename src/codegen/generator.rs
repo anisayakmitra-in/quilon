@@ -51,6 +51,18 @@ fn type_mangle(ty: &Type) -> String {
     }
 }
 
+/// Render an entry point's declared parameter types as a readable signature fragment
+/// (comma-joined `Num`/`Text`/`[]Text`-style labels) for the unsupported-signature
+/// diagnostic. `()` renders as an empty string. Uses the shared `ast::type_label` so
+/// codegen and the type checker render types identically.
+fn fmt_param_types(params: &[Type]) -> String {
+    params
+        .iter()
+        .map(crate::ast::type_label)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// The distinct LLVM symbol for one overload member: its name plus a per-parameter
 /// type tag. Operator symbols (which aren't valid LLVM identifiers) are spelled out so
 /// e.g. `+` on `(Point, Point)` becomes `op.add$named$Point$named$Point`.
@@ -434,9 +446,26 @@ impl<'ctx> CodeGenerator<'ctx> {
             self.generate_item(item)?;
         }
 
-        // Check if entry point function (^) exists and generate C main wrapper
+        // Check if entry point function (^) exists and generate C main wrapper.
+        // Pass `^`'s DECLARED Quilon parameter types so the wrapper can dispatch on the
+        // real types (`[]Text` / `[][]Text` / legacy `Num`) — the lowered LLVM types are
+        // ambiguous (`Text`, records, sum types, and arrays all become `{ ptr, i64 }`
+        // structs), so dispatching on the LLVM shape would mis-route them.
         if self.module.get_function("^").is_some() {
-            self.generate_main_wrapper()?;
+            let entry_params: Vec<Type> = program
+                .items
+                .iter()
+                .find_map(|item| match item {
+                    Item::FunctionDecl(decl) if decl.name == "^" => Some(
+                        decl.params
+                            .iter()
+                            .map(|p| p.type_annotation.clone().unwrap_or(Type::Num))
+                            .collect(),
+                    ),
+                    _ => None,
+                })
+                .unwrap_or_default();
+            self.generate_main_wrapper(&entry_params)?;
         }
 
         // Verify the module
@@ -448,16 +477,21 @@ impl<'ctx> CodeGenerator<'ctx> {
         Ok(self.module.print_to_string().to_string())
     }
 
-    fn generate_main_wrapper(&mut self) -> Result<(), String> {
-        // Create C-compatible main: int main(int argc, char** argv)
+    fn generate_main_wrapper(&mut self, entry_params: &[Type]) -> Result<(), String> {
+        // Create C-compatible main: `int main(int argc, char** argv, char** envp)`.
+        // The third (`envp`) parameter is the POSIX/glibc extension to C `main`; passing
+        // it is harmless even for a program that only declares `args`, and it is how we
+        // thread the environment in for an `^(args, env)` entry point.
         let i32_type = self.context.i32_type();
         let ptr_type = self.context.ptr_type(AddressSpace::default());
 
-        let main_type = i32_type.fn_type(&[i32_type.into(), ptr_type.into()], false);
+        let main_type =
+            i32_type.fn_type(&[i32_type.into(), ptr_type.into(), ptr_type.into()], false);
 
         let main_fn = self.module.add_function("main", main_type, None);
         let argc = main_fn.get_nth_param(0).unwrap().into_int_value();
-        let _argv = main_fn.get_nth_param(1).unwrap().into_pointer_value();
+        let argv = main_fn.get_nth_param(1).unwrap().into_pointer_value();
+        let envp = main_fn.get_nth_param(2).unwrap().into_pointer_value();
 
         let entry = self.context.append_basic_block(main_fn, "entry");
         self.builder.position_at_end(entry);
@@ -475,39 +509,100 @@ impl<'ctx> CodeGenerator<'ctx> {
             .get_function("^")
             .ok_or_else(|| "Entry point function ^ not found".to_string())?;
 
-        // Check the signature of ^ to determine how to call it
-        let user_entry_type = user_entry.get_type();
-        let param_count = user_entry_type.count_param_types();
+        // Dispatch on `^`'s DECLARED Quilon parameter types (not the lowered LLVM types:
+        // `Text`/record/sum/array all lower to `{ ptr, i64 }` structs, so the LLVM shape
+        // can't tell them apart — dispatching on it would silently call a `Text` param
+        // with the argv array). The supported signatures are `^()`,
+        // `^(args :: []Text)`, and `^(args :: []Text, env :: [][]Text)` (plus the legacy
+        // `^(argc :: Num, argv :: Num)`). We match on the EXACT element types — the
+        // runtime builds `Text`/`[]Text` elements, so a `[]Num` (or any other element)
+        // param must NOT reach the array arms, or it would receive mis-sized elements.
+        let is_text_array = |t: &Type| matches!(t, Type::Array(e) if **e == Type::Text);
+        let is_text_pairs = |t: &Type| matches!(t, Type::Array(e) if is_text_array(e.as_ref()));
 
-        let result = if param_count == 0 {
-            // >> = () -> Num - Call with no arguments
-            self.builder
-                .build_call(user_entry, &[], "entry_result")
-                .map_err(|e| format!("Failed to call entry point: {:?}", e))?
-        } else if param_count == 2 {
-            // >> = (argc, argv) -> Num - Pass argc/argv
-            // Convert argc to Num (f64)
-            let argc_as_f64 = self
+        // `argc` arrives as the C `int` (i32); widen it to the i64 the runtime expects.
+        let argc_i64 = self
+            .builder
+            .build_int_s_extend(argc, self.context.i64_type(), "argc_i64")
+            .map_err(|e| format!("Failed to widen argc: {:?}", e))?;
+
+        // Build the real `args :: []Text` from argc/argv (used by the modern forms).
+        let build_args = |me: &Self| -> Result<BasicValueEnum<'ctx>, String> {
+            let f = me.get_intrinsic("__argv_to_text_array")?;
+            use inkwell::values::AnyValue;
+            Ok(me
                 .builder
-                .build_signed_int_to_float(argc, self.context.f64_type(), "argc_f64")
-                .map_err(|e| format!("Failed to convert argc: {:?}", e))?;
+                .build_call(f, &[argc_i64.into(), argv.into()], "args_arr")
+                .map_err(|e| format!("Failed to build argv array: {:?}", e))?
+                .as_any_value_enum()
+                .into_struct_value()
+                .into())
+        };
+        // Build the real `env :: [][]Text` from envp (used by the 2-arg modern form).
+        let build_env = |me: &Self| -> Result<BasicValueEnum<'ctx>, String> {
+            let f = me.get_intrinsic("__envp_to_pairs")?;
+            use inkwell::values::AnyValue;
+            Ok(me
+                .builder
+                .build_call(f, &[envp.into()], "env_pairs")
+                .map_err(|e| format!("Failed to build envp pairs: {:?}", e))?
+                .as_any_value_enum()
+                .into_struct_value()
+                .into())
+        };
 
-            // For argv, since we don't have proper pointer types yet, pass 0
-            // TODO: Convert argv to []String when we have proper array support
-            let argv_placeholder = self.context.f64_type().const_zero();
+        let unsupported = || -> String {
+            format!(
+                "Entry point ^ has an unsupported signature ({}). \
+                 Valid signatures: '() -> Num', '(args :: []Text) -> Num', \
+                 '(args :: []Text, env :: [][]Text) -> Num' \
+                 (or legacy '(argc :: Num, argv :: Num) -> Num').",
+                fmt_param_types(entry_params)
+            )
+        };
 
-            let args: &[inkwell::values::BasicMetadataValueEnum] =
-                &[argc_as_f64.into(), argv_placeholder.into()];
-
-            self.builder
-                .build_call(user_entry, args, "entry_result")
-                .map_err(|e| format!("Failed to call entry point: {:?}", e))?
-        } else {
-            return Err(format!(
-                "Entry point >> must have 0 or 2 parameters, found {}. \
-                 Valid signatures: '() -> Num' or '(argc :: Num, argv :: Num) -> Num'",
-                param_count
-            ));
+        let result = match entry_params {
+            // `^() -> Num`
+            [] => self
+                .builder
+                .build_call(user_entry, &[], "entry_result")
+                .map_err(|e| format!("Failed to call entry point: {:?}", e))?,
+            // `^(args :: []Text) -> Num`
+            [a] if is_text_array(a) => {
+                let args = build_args(self)?;
+                self.builder
+                    .build_call(user_entry, &[args.into()], "entry_result")
+                    .map_err(|e| format!("Failed to call entry point: {:?}", e))?
+            }
+            // `^(args :: []Text, env :: [][]Text) -> Num`
+            [a, e] if is_text_array(a) && is_text_pairs(e) => {
+                let args = build_args(self)?;
+                let env = build_env(self)?;
+                self.builder
+                    .build_call(user_entry, &[args.into(), env.into()], "entry_result")
+                    .map_err(|e| format!("Failed to call entry point: {:?}", e))?
+            }
+            // Legacy `^(argc :: Num, argv :: Num) -> Num`: argc as a Num, argv a `0`
+            // placeholder. Deprecated in favour of `^(args :: []Text)`.
+            [Type::Num, Type::Num] => {
+                let argc_as_f64 = self
+                    .builder
+                    .build_signed_int_to_float(argc, self.context.f64_type(), "argc_f64")
+                    .map_err(|e| format!("Failed to convert argc: {:?}", e))?;
+                let argv_placeholder = self.context.f64_type().const_zero();
+                self.builder
+                    .build_call(
+                        user_entry,
+                        &[argc_as_f64.into(), argv_placeholder.into()],
+                        "entry_result",
+                    )
+                    .map_err(|e| format!("Failed to call entry point: {:?}", e))?
+            }
+            // Any other signature (e.g. `^(x :: Text)`, `^(args :: []Num)` with a
+            // non-`Text` element, `^(a :: Num, b :: Text)`, `^(env :: [][]Text)` without
+            // args, 3+ params) is rejected with a clear diagnostic instead of a silent
+            // miscompile or an LLVM verification crash.
+            _ => return Err(unsupported()),
         };
 
         // Convert result to i32
@@ -840,11 +935,21 @@ impl<'ctx> CodeGenerator<'ctx> {
     /// implicit-0 treatment. Used for true top-level functions and for non-capturing
     /// nested functions (which can recurse, unlike a closure value).
     fn emit_module_function(&mut self, decl: &FunctionDecl) -> Result<(), String> {
-        // Convert parameter types to LLVM types
+        // Convert parameter types to LLVM types. An ARRAY parameter must use the VALUE
+        // representation — a `{ ptr, i64 }` struct — so `.size`/indexing on the param
+        // work (an array value flows as that struct, not a bare `ptr`, which is what
+        // `type_to_llvm` would give). Every other type keeps its `type_to_llvm` lowering
+        // (e.g. a record/sum param is passed by pointer/struct as before).
         let param_types: Vec<BasicTypeEnum> = decl
             .params
             .iter()
-            .map(|p| self.type_to_llvm(&p.type_annotation.clone().unwrap_or(Type::Num)))
+            .map(|p| {
+                let ty = p.type_annotation.clone().unwrap_or(Type::Num);
+                match ty {
+                    Type::Array(_) => self.value_repr_type(&ty),
+                    _ => self.type_to_llvm(&ty),
+                }
+            })
             .collect::<Result<Vec<_>, _>>()?;
 
         // Convert return type. The entry point `^` always returns a Num exit code at
@@ -2313,6 +2418,15 @@ impl<'ctx> CodeGenerator<'ctx> {
             "__print_bool_fd" => void.fn_type(&[i64t.into(), i64t.into()], false),
             // void __print_text_fd(i64 fd, i8*) — C string + newline to fd.
             "__print_text_fd" => void.fn_type(&[i64t.into(), ptr.into()], false),
+            // { ptr, i64 } __argv_to_text_array(i64 argc, i8** argv) — build a `[]Text`
+            // (array of `{ptr,i64}` Text structs) from the C argc/argv. Returns the
+            // `[]Text` value struct (same shape as `ptr_len_struct_type`).
+            "__argv_to_text_array" => self
+                .ptr_len_struct_type()
+                .fn_type(&[i64t.into(), ptr.into()], false),
+            // { ptr, i64 } __envp_to_pairs(i8** envp) — build a `[][]Text` (array of
+            // 2-element `[]Text` `[key, value]` pairs) from the C envp.
+            "__envp_to_pairs" => self.ptr_len_struct_type().fn_type(&[ptr.into()], false),
             other => return Err(format!("Unknown runtime intrinsic: {}", other)),
         };
         Ok(self.module.add_function(name, fn_type, None))
