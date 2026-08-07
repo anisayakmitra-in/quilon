@@ -102,6 +102,13 @@ pub enum TypeError {
         got: Vec<Type>,
         span: Span,
     },
+    /// A built-in method call had a statically-invalid argument that isn't a plain type
+    /// mismatch (e.g. `Text.replace`'s literal `count` being `<= 0`). Carries a ready-made
+    /// message describing the problem and the fix.
+    InvalidBuiltinArgument {
+        message: String,
+        span: Span,
+    },
 }
 
 impl TypeError {
@@ -123,7 +130,8 @@ impl TypeError {
             | TypeError::ComparisonOverloadNotBool { span, .. }
             | TypeError::PatternTypeMismatch { span, .. }
             | TypeError::NonExhaustiveMatch { span }
-            | TypeError::InvalidEntryPointSignature { span, .. } => span,
+            | TypeError::InvalidEntryPointSignature { span, .. }
+            | TypeError::InvalidBuiltinArgument { span, .. } => span,
         }
     }
 }
@@ -233,6 +241,9 @@ impl std::fmt::Display for TypeError {
                      (or legacy '(argc :: Num, argv :: Num)').",
                     fmt_type_list(got)
                 )
+            }
+            TypeError::InvalidBuiltinArgument { message, .. } => {
+                write!(f, "{}", message)
             }
         }
     }
@@ -1997,6 +2008,19 @@ impl TypeChecker {
             return self.check_array_method(name, *elem_type, args, span);
         }
 
+        // Built-in `Text` methods (`split`/`trim`/`replace`/`contains`/`indexOf`/
+        // `slice`/`toUpper`/`toLower`) — RESERVED on `Text`, exactly like the array
+        // methods above: when the receiver (`args[0]`) is a `Text`, the built-in is
+        // resolved here ahead of any same-named user overload. (A user may still define
+        // e.g. `trim` on a non-Text type; dispatch only diverts on a Text receiver.)
+        if let Expr::Ident { name, .. } = func
+            && !args.is_empty()
+            && crate::ast::is_text_method(name)
+            && matches!(self.infer_expr(&args[0])?, Type::Text)
+        {
+            return self.check_text_method(name, args, span);
+        }
+
         // Check if this is a method call: func is Ident and first arg is a Named type
         if let Expr::Ident { name, .. } = func
             && !args.is_empty()
@@ -2177,6 +2201,133 @@ impl TypeChecker {
             }
             other => unreachable!("unhandled array method {other}"),
         }
+    }
+
+    /// Type-check a built-in `Text` method call. `args[0]` is the receiver (already
+    /// known to be `Text`); the remaining args are the method's own arguments. Signatures
+    /// (see LANGUAGE.md):
+    ///   - `split(sep :: Text)`                 -> `[]Text`
+    ///   - `trim()` / `trimStart()` / `trimEnd()` / `toUpper()` / `toLower()` -> `Text`
+    ///   - `replaceAll(from :: Text, to :: Text)` -> `Text`
+    ///   - `replace(from :: Text, to :: Text, count :: Num)` -> `Text` (first `count`)
+    ///   - `contains(sub :: Text)`              -> `Bool`
+    ///   - `indexOf(sub :: Text)`               -> `Result` (`Ok(Num)` / `NotOk`)
+    ///   - `slice(start :: Num, end :: Num)`    -> `Text`
+    fn check_text_method(
+        &mut self,
+        method: &str,
+        args: &[Expr],
+        span: &Span,
+    ) -> Result<Type, TypeError> {
+        // `args[0]` (the receiver Text) was already inferred by the dispatch guard.
+        let method_args = &args[1..];
+
+        // Each method's expected parameter types and result type — the single table that
+        // drives both the arity check and the per-argument type check below. `indexOf`
+        // returns `Ok(Num)`/`NotOk` (no -1 sentinel); `split` returns `[]Text`.
+        use Type::{Bool, Num, Text};
+        let (params, result): (Vec<Type>, Type) = match method {
+            "trim" | "trimStart" | "trimEnd" | "toUpper" | "toLower" => (vec![], Text),
+            "split" => (vec![Text], Type::Array(Box::new(Text))),
+            "contains" => (vec![Text], Bool),
+            "indexOf" => (vec![Text], result_of(Num)),
+            "slice" => (vec![Num, Num], Text),
+            "replaceAll" => (vec![Text, Text], Text),
+            "replace" => (vec![Text, Text, Num], Text),
+            other => unreachable!("unhandled text method {other}"),
+        };
+
+        if method_args.len() != params.len() {
+            return Err(TypeError::WrongNumberOfArguments {
+                expected: params.len(),
+                got: method_args.len(),
+                span: span.clone(),
+            });
+        }
+        for (arg, param_ty) in method_args.iter().zip(&params) {
+            let arg_type = self.infer_expr(arg)?;
+            self.check_type_compatibility(param_ty, &arg_type, span)?;
+        }
+
+        // Fail-loud contract for `replace`/`replaceAll`: reject at COMPILE time whatever is
+        // determinable from literals (the runtime aborts on the rest — no silent no-ops).
+        if method == "replace" || method == "replaceAll" {
+            self.check_replace_literals(method, args, span)?;
+        }
+
+        Ok(result)
+    }
+
+    /// Compile-time validation of `replace`/`replaceAll` arguments that are literals — the
+    /// static half of the fail-loud contract (the runtime `__text_replace*` intrinsics
+    /// abort on the same conditions when they aren't literal-determinable):
+    ///   - an empty `from` (`""`) is ill-defined → error (both methods);
+    ///   - `replace`'s `count` literal `<= 0` → error (use `replaceAll` for "all");
+    ///   - when the receiver, `from`, and `count` are ALL literals, a `count` greater than
+    ///     the occurrences actually present → error.
+    ///
+    /// `args[0]` is the receiver; `args[1]` = `from`, `args[2]` = `to`, `args[3]` = `count`.
+    fn check_replace_literals(
+        &self,
+        method: &str,
+        args: &[Expr],
+        span: &Span,
+    ) -> Result<(), TypeError> {
+        let err = |message: String| {
+            Err(TypeError::InvalidBuiltinArgument {
+                message,
+                span: span.clone(),
+            })
+        };
+
+        // Empty `from` — a literal "" is ill-defined for both methods.
+        if let Expr::String { value: from, .. } = &args[1]
+            && from.is_empty()
+        {
+            return err("replace: `from` must not be empty".to_string());
+        }
+
+        if method != "replace" {
+            return Ok(());
+        }
+        // A literal count is `Number` or a negated `Number` (`-2` parses as `Neg(2)`).
+        let literal_count = match &args[3] {
+            Expr::Number { value, .. } => Some(*value),
+            Expr::UnaryOp {
+                op: crate::ast::UnaryOp::Neg,
+                expr,
+                ..
+            } => match expr.as_ref() {
+                Expr::Number { value, .. } => Some(-value),
+                _ => None,
+            },
+            _ => None,
+        };
+        let Some(count) = literal_count else {
+            return Ok(()); // non-literal count — checked at runtime
+        };
+        // Truncate toward zero, matching codegen/runtime integer handling.
+        let count = count.trunc();
+        if count <= 0.0 {
+            return err(format!(
+                "replace count must be a positive integer (got {count}); \
+                 use replaceAll to replace all occurrences"
+            ));
+        }
+        // All-literal case: count occurrences of the literal `from` in the literal receiver
+        // and reject a count that exceeds them (non-overlapping, matching `str::replacen`).
+        if let (Expr::String { value: hay, .. }, Expr::String { value: from, .. }) =
+            (&args[0], &args[1])
+            && !from.is_empty()
+        {
+            let occurrences = hay.matches(from.as_str()).count() as f64;
+            if count > occurrences {
+                return err(format!(
+                    "replace: count {count} exceeds {occurrences} occurrences of `{from}`"
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// Type-check a lambda argument to an array method by binding its parameters to the

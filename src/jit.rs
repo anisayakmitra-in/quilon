@@ -92,6 +92,46 @@ pub fn run_program(program: &Program, args: &[String]) -> Result<i32, String> {
                 "__envp_to_pairs",
                 intrinsics::__envp_to_pairs as *const () as usize,
             ),
+            (
+                "__text_trim_start",
+                intrinsics::__text_trim_start as *const () as usize,
+            ),
+            (
+                "__text_trim_end",
+                intrinsics::__text_trim_end as *const () as usize,
+            ),
+            (
+                "__text_to_upper",
+                intrinsics::__text_to_upper as *const () as usize,
+            ),
+            (
+                "__text_to_lower",
+                intrinsics::__text_to_lower as *const () as usize,
+            ),
+            (
+                "__text_contains",
+                intrinsics::__text_contains as *const () as usize,
+            ),
+            (
+                "__text_index_of",
+                intrinsics::__text_index_of as *const () as usize,
+            ),
+            (
+                "__text_replace_all",
+                intrinsics::__text_replace_all as *const () as usize,
+            ),
+            (
+                "__text_replace_n",
+                intrinsics::__text_replace_n as *const () as usize,
+            ),
+            (
+                "__text_slice",
+                intrinsics::__text_slice as *const () as usize,
+            ),
+            (
+                "__text_split",
+                intrinsics::__text_split as *const () as usize,
+            ),
         ];
         for (name, addr) in mappings {
             if let Some(func) = module.get_function(name) {
