@@ -708,14 +708,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let mut param_types: Vec<inkwell::types::BasicMetadataTypeEnum> =
                     vec![ptr_type.into()];
                 for p in &method.params {
-                    let pt = self.type_to_llvm(&p.type_annotation.clone().unwrap_or(Type::Num))?;
+                    let pt = self.boundary_type(&p.type_annotation.clone().unwrap_or(Type::Num))?;
                     param_types.push(pt.into());
                 }
                 // Unannotated return type defaults to Num, except a setter body whose
                 // tail is an in-place field write (`it.field := v`) yields `$` (i8).
                 let inferred_ret =
                     self.default_return_type(method.return_type.as_ref(), &method.body);
-                let return_type = self.type_to_llvm(&inferred_ret)?;
+                let return_type = self.boundary_type(&inferred_ret)?;
                 let fn_type = return_type.fn_type(&param_types, false);
                 let method_fn = self.module.add_function(&mangled, fn_type, None);
                 // Internal linkage: method symbols are module-private (see generate_function_decl).
@@ -964,21 +964,13 @@ impl<'ctx> CodeGenerator<'ctx> {
     /// implicit-0 treatment. Used for true top-level functions and for non-capturing
     /// nested functions (which can recurse, unlike a closure value).
     fn emit_module_function(&mut self, decl: &FunctionDecl) -> Result<(), String> {
-        // Convert parameter types to LLVM types. An ARRAY parameter must use the VALUE
-        // representation — a `{ ptr, i64 }` struct — so `.size`/indexing on the param
-        // work (an array value flows as that struct, not a bare `ptr`, which is what
-        // `type_to_llvm` would give). Every other type keeps its `type_to_llvm` lowering
-        // (e.g. a record/sum param is passed by pointer/struct as before).
+        // Convert parameter types to LLVM types via the shared boundary rule: an ARRAY
+        // param crosses as the `{ ptr, i64 }` VALUE struct (so `.size`/indexing work),
+        // everything else via `type_to_llvm` (a record/sum param stays by pointer/struct).
         let param_types: Vec<BasicTypeEnum> = decl
             .params
             .iter()
-            .map(|p| {
-                let ty = p.type_annotation.clone().unwrap_or(Type::Num);
-                match ty {
-                    Type::Array(_) => self.value_repr_type(&ty),
-                    _ => self.type_to_llvm(&ty),
-                }
-            })
+            .map(|p| self.boundary_type(&p.type_annotation.clone().unwrap_or(Type::Num)))
             .collect::<Result<Vec<_>, _>>()?;
 
         // Convert return type. The entry point `^` always returns a Num exit code at
@@ -990,17 +982,9 @@ impl<'ctx> CodeGenerator<'ctx> {
             // An unannotated body defaults to `Num`, except a Unit (`$`) tail — e.g.
             // `log = m => print(m)` — which must be `i8`, not f64, or `build_return`
             // would emit `ret i8` into an f64 function and fail module verification.
+            // The same boundary rule applies: an array return crosses as the value struct.
             let inferred = self.default_return_type(decl.return_type.as_ref(), &decl.body);
-            // An ARRAY return must use the VALUE representation — a `{ ptr, i64 }` struct,
-            // the same shape array literals/params/reads use — not the bare `ptr` that
-            // `type_to_llvm` gives. Otherwise the returned struct value mismatches the
-            // `ptr` return slot, and callers that feed the result to `+`/`.size`/indexing
-            // (which expect the struct) hit a value-variant panic. Mirrors the array
-            // PARAMETER rule above.
-            match inferred {
-                Type::Array(_) => self.value_repr_type(&inferred)?,
-                _ => self.type_to_llvm(&inferred)?,
-            }
+            self.boundary_type(&inferred)?
         };
 
         // Create function type - use a helper to convert BasicTypeEnum to BasicMetadataTypeEnum
@@ -1805,10 +1789,10 @@ impl<'ctx> CodeGenerator<'ctx> {
     ) -> Result<ClosureSig<'ctx>, String> {
         let param_types: Vec<BasicTypeEnum> = params
             .iter()
-            .map(|p| self.type_to_llvm(&p.type_annotation.clone().unwrap_or(Type::Num)))
+            .map(|p| self.boundary_type(&p.type_annotation.clone().unwrap_or(Type::Num)))
             .collect::<Result<Vec<_>, _>>()?;
         let ret = self.default_return_type(return_type, body);
-        Ok((param_types, self.type_to_llvm(&ret)?))
+        Ok((param_types, self.boundary_type(&ret)?))
     }
 
     /// Lower a function literal to a value: lift its body into a fresh top-level function
@@ -3149,34 +3133,17 @@ impl<'ctx> CodeGenerator<'ctx> {
             .map(|e| self.generate_expr(e))
             .collect::<Result<Vec<_>, _>>()?;
 
-        // Get element type from first element
+        // Get element type from first element.
         let elem_type = values[0].get_type();
 
-        // Heap-allocate (GC-managed) the backing buffer rather than a stack `alloca`: an
-        // array is a `{ ptr, i64 }` value whose data must outlive the current frame — e.g.
-        // when the literal is returned from a function, or spliced by `+`/spread into a
-        // longer array. A stack buffer would leave the escaping array's data pointer
-        // dangling (`.size` still reads, but element reads see reclaimed stack). Mirrors
-        // the spread / range / map / filter paths, which already use `alloc_array_data`.
-        let i64_type = self.context.i64_type();
-        let count = i64_type.const_int(size as u64, false);
-        let data_ptr = self.alloc_array_data(elem_type, count)?;
-
-        // Store each element into the buffer.
-        for (i, value) in values.iter().enumerate() {
-            let index = i64_type.const_int(i as u64, false);
-            let slot = unsafe {
-                self.builder
-                    .build_gep(elem_type, data_ptr, &[index], &format!("elem_{}", i))
-                    .map_err(|e| format!("Failed to build GEP: {:?}", e))?
-            };
-            self.builder
-                .build_store(slot, *value)
-                .map_err(|e| format!("Failed to store element: {:?}", e))?;
-        }
-
-        // Build the { ptr, i64 } array struct value from the heap buffer.
-        self.array_struct(data_ptr, count)
+        // Lay the elements into a GC-allocated buffer via the shared array builder — the
+        // SAME mechanism used by `+` concatenation and `<-` spread. Heap (not stack)
+        // allocation is essential: an array is a `{ ptr, i64 }` value whose data must
+        // outlive the current frame (e.g. when the literal is returned from a function),
+        // and `build_array_from_parts` already GC-allocates. Each literal element is an
+        // `Inline` part (contributing one slot).
+        let parts: Vec<ArrayPart<'ctx>> = values.into_iter().map(ArrayPart::Inline).collect();
+        self.build_array_from_parts(elem_type, &parts)
     }
 
     /// Lower an array literal that contains one or more `<-` spreads (`[<-xs, 4, <-ys]`).
@@ -5430,6 +5397,22 @@ impl<'ctx> CodeGenerator<'ctx> {
                 Ok(self.context.ptr_type(AddressSpace::default()).into())
             }
             Type::Generic { .. } => Ok(self.context.f64_type().into()),
+            _ => self.type_to_llvm(ty),
+        }
+    }
+
+    /// The LLVM type a value of `ty` takes when it CROSSES a function boundary — a param
+    /// or a return, for top-level functions, methods, and closures alike. An array must
+    /// use its VALUE representation (the `{ ptr, i64 }` struct, so callers can `.size` /
+    /// index / concatenate the result), matching how array values flow everywhere else;
+    /// everything else keeps its `type_to_llvm` lowering. This is deliberately NOT the
+    /// whole of [`value_repr_type`]: a `Record`/`Named` argument keeps its by-pointer ABI
+    /// and a `Generic` keeps `type_to_llvm`, so only the array case diverges here. Every
+    /// signature site funnels through this one method so the boundary rule lives in a
+    /// single place.
+    fn boundary_type(&self, ty: &Type) -> Result<BasicTypeEnum<'ctx>, String> {
+        match ty {
+            Type::Array(_) => self.value_repr_type(ty),
             _ => self.type_to_llvm(ty),
         }
     }

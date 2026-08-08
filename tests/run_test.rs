@@ -780,3 +780,38 @@ fn run_function_returning_array_is_usable() {
     // ys = [10,11,12] (size 3); ys[2] = 12  ->  4 + 2 + 3 + 12 = 21.
     assert_exit(src, 21);
 }
+
+#[test]
+fn run_closure_returning_array_is_usable() {
+    // Regression: a local closure with an array return type must yield the `{ptr,i64}`
+    // value (heap-backed), so its result concatenates and indexes — the SAME boundary
+    // rule as top-level functions (both funnel through `boundary_type`).
+    let src = r#"
+        ^ = () -> Num => <
+          mk := (n :: Num) -> []Num => [n, n + 1]
+          xs :: []Num = mk(10) + mk(20)
+          xs.size + xs[3]
+        >
+    "#;
+    // mk(10) = [10,11], mk(20) = [20,21]; xs = [10,11,20,21] (size 4); xs[3] = 21 -> 25.
+    assert_exit(src, 25);
+}
+
+#[test]
+fn run_method_returning_array_is_usable() {
+    // Regression: a record method with an array return type must yield the `{ptr,i64}`
+    // value (heap-backed), usable with `.size` / indexing after the call returns.
+    let src = r#"
+        Bag = {
+          tag :: Text,
+          pair = () -> []Text => [it.tag, it.tag]
+        }
+        ^ = () -> Num => <
+          b = Bag { tag = "hi" }
+          ps :: []Text = b.pair()
+          ps.size + ps[1].size
+        >
+    "#;
+    // pair() = ["hi","hi"] (size 2); ps[1] = "hi" (size 2) -> 4.
+    assert_exit(src, 4);
+}
