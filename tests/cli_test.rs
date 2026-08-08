@@ -187,20 +187,18 @@ fn get_opt_skips_argv0() {
 }
 
 #[test]
-fn get_opt_trailing_flag_is_present_but_valueless() {
-    // A trailing "--out" with no following value is present (Ok) but supplies no value.
+fn get_opt_trailing_flag_with_no_value_is_not_ok() {
+    // A trailing "--out" with no following value collects nothing, so it is NotOk(name).
     let src = r#"
         << core.cli
         ^ = () -> Num => <
           args :: []Text = ["p", "--out"]
-          none :: []Text = args.filter(x => false)
-          present :: Num = getOpt(args, "out") ? | Ok(_) => 1 | NotOk(_) => 0
-          vs :: []Text = getOpt(args, "out") ? | Ok(v) => v | NotOk(_) => none
-          present * 10 + vs.size
+          name :: Text = getOpt(args, "out") ? | Ok(_) => "" | NotOk(n) => n
+          name.size
         >
     "#;
-    // present 1, size 0 -> 10.
-    assert_exit(src, 10);
+    // NotOk("out") -> "out".size = 3.
+    assert_exit(src, 3);
 }
 
 // ---- import wiring -------------------------------------------------------------------

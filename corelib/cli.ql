@@ -44,9 +44,9 @@
 ~ are recognised: `--name value` (the following argument) and `--name=value` (the
 ~ text after the first `=`). The name works with OR without a leading `--`. Since
 ~ an option may be repeated, the collected values are returned as `Ok([]Text)` (in
-~ argv order); a name that never appears yields `NotOk(name)`. A name that appears
-~ but supplies no value (e.g. a trailing `--name` with nothing after it) is still
-~ present, so it yields `Ok` of the values gathered so far (possibly empty).
+~ argv order). `NotOk(name)` is returned when no value is found — either the name
+~ never appears, or it appears only as a trailing `--name` with nothing after it
+~ (the `--name=value` form always supplies a value, even the empty one in `--name=`).
 ~ Parsing is positional (no flag registry): the token right after a space-form
 ~ `--name` is taken as its value even if that token itself looks like an option.
 >> getOpt = (args :: []Text, name :: Text) -> Result => <
@@ -66,6 +66,5 @@
           ? acc + [optVal(args[i])]
           : (i + 1 < args.size ? acc + [args[i + 1]] : acc))
       : acc)
-  present :: Bool = idx.find(i => matches(args[i])) ? | Ok(_) => true | NotOk(_) => false
-  present ? Ok(vals) : NotOk(name)
+  vals.size > 0 ? Ok(vals) : NotOk(name)
 >

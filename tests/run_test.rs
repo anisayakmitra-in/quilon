@@ -760,3 +760,23 @@ fn unterminated_block_with_only_midline_gt_is_an_error() {
         "an unterminated block must be a parse error"
     );
 }
+
+#[test]
+fn run_function_returning_array_is_usable() {
+    // Regression: a user function whose declared return type is a bare array
+    // (`[]Text` / `[]Num`) must yield the `{ptr,i64}` array VALUE, so a caller can
+    // concatenate the result (`+`), take `.size`, and index it. Previously the return
+    // was lowered to a bare `ptr`, so feeding it to `+`/`.size` panicked codegen.
+    let src = r#"
+        pair = (a :: Text, b :: Text) -> []Text => [a, b]
+        nums = (n :: Num) -> []Num => [n, n + 1, n + 2]
+        ^ = () -> Num => <
+          xs :: []Text = pair("a", "bb") + pair("ccc", "d")
+          ys :: []Num = nums(10)
+          xs.size + xs[1].size + ys.size + ys[2]
+        >
+    "#;
+    // xs = ["a","bb","ccc","d"] (size 4); xs[1] = "bb" (size 2);
+    // ys = [10,11,12] (size 3); ys[2] = 12  ->  4 + 2 + 3 + 12 = 21.
+    assert_exit(src, 21);
+}

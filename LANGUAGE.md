@@ -738,7 +738,7 @@ Thin, pipe-friendly helpers over the entry point's `args :: []Text` and
 |----------|--------|
 | `getEnv(env :: [][]Text, key :: Text) -> Result` | Find the pair whose `[0]` equals `key`; `Ok(value)` (its `[1]`) if present, else `NotOk`. |
 | `hasFlag(args :: []Text, flag :: Text) -> Bool` | `true` when the bare flag appears in `args`. The name works **with or without** a leading `--` (so `"verbose"` and `"--verbose"` both match an arg `"--verbose"`). |
-| `getOpt(args :: []Text, name :: Text) -> Result` | Collect the option's values (argv[0] skipped), recognising both `--name value` and `--name=value`; the name works with or without `--`. Returns `Ok([]Text)` of the values in argv order (an option may repeat), or `NotOk(name)` when the name never appears. A name that appears but supplies no value (e.g. a trailing `--name`) is still present, so it yields `Ok` of the values gathered so far (possibly empty). |
+| `getOpt(args :: []Text, name :: Text) -> Result` | Collect the option's values (argv[0] skipped), recognising both `--name value` and `--name=value`; the name works with or without `--`. Returns `Ok([]Text)` of the values in argv order (an option may repeat), or `NotOk(name)` when no value is found — the name never appears, or appears only as a trailing `--name` with nothing after it. (The `--name=value` form always supplies a value, even the empty one in `--name=`.) |
 
 ```quilon
 << core.cli

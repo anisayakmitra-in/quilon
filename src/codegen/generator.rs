@@ -991,7 +991,16 @@ impl<'ctx> CodeGenerator<'ctx> {
             // `log = m => print(m)` — which must be `i8`, not f64, or `build_return`
             // would emit `ret i8` into an f64 function and fail module verification.
             let inferred = self.default_return_type(decl.return_type.as_ref(), &decl.body);
-            self.type_to_llvm(&inferred)?
+            // An ARRAY return must use the VALUE representation — a `{ ptr, i64 }` struct,
+            // the same shape array literals/params/reads use — not the bare `ptr` that
+            // `type_to_llvm` gives. Otherwise the returned struct value mismatches the
+            // `ptr` return slot, and callers that feed the result to `+`/`.size`/indexing
+            // (which expect the struct) hit a value-variant panic. Mirrors the array
+            // PARAMETER rule above.
+            match inferred {
+                Type::Array(_) => self.value_repr_type(&inferred)?,
+                _ => self.type_to_llvm(&inferred)?,
+            }
         };
 
         // Create function type - use a helper to convert BasicTypeEnum to BasicMetadataTypeEnum
@@ -3143,68 +3152,31 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Get element type from first element
         let elem_type = values[0].get_type();
 
-        // Allocate array storage
-        let array_type = elem_type.array_type(size as u32);
-        let array_alloca = self
-            .builder
-            .build_alloca(array_type, "array_data")
-            .map_err(|e| format!("Failed to allocate array: {:?}", e))?;
+        // Heap-allocate (GC-managed) the backing buffer rather than a stack `alloca`: an
+        // array is a `{ ptr, i64 }` value whose data must outlive the current frame — e.g.
+        // when the literal is returned from a function, or spliced by `+`/spread into a
+        // longer array. A stack buffer would leave the escaping array's data pointer
+        // dangling (`.size` still reads, but element reads see reclaimed stack). Mirrors
+        // the spread / range / map / filter paths, which already use `alloc_array_data`.
+        let i64_type = self.context.i64_type();
+        let count = i64_type.const_int(size as u64, false);
+        let data_ptr = self.alloc_array_data(elem_type, count)?;
 
-        // Store each element
+        // Store each element into the buffer.
         for (i, value) in values.iter().enumerate() {
-            let index = self.context.i32_type().const_int(i as u64, false);
-            let gep = unsafe {
+            let index = i64_type.const_int(i as u64, false);
+            let slot = unsafe {
                 self.builder
-                    .build_gep(
-                        array_type,
-                        array_alloca,
-                        &[self.context.i32_type().const_zero(), index],
-                        &format!("elem_{}", i),
-                    )
+                    .build_gep(elem_type, data_ptr, &[index], &format!("elem_{}", i))
                     .map_err(|e| format!("Failed to build GEP: {:?}", e))?
             };
             self.builder
-                .build_store(gep, *value)
+                .build_store(slot, *value)
                 .map_err(|e| format!("Failed to store element: {:?}", e))?;
         }
 
-        // Create the array struct { ptr, size }
-        let ptr_type = self.context.ptr_type(AddressSpace::default());
-        let i64_type = self.context.i64_type();
-        let array_struct_type = self
-            .context
-            .struct_type(&[ptr_type.into(), i64_type.into()], false);
-
-        let array_struct = self
-            .builder
-            .build_alloca(array_struct_type, "array")
-            .map_err(|e| format!("Failed to allocate array struct: {:?}", e))?;
-
-        // Store pointer to data in field 0
-        let ptr_field = self
-            .builder
-            .build_struct_gep(array_struct_type, array_struct, 0, "array_ptr_field")
-            .map_err(|e| format!("Failed to get ptr field: {:?}", e))?;
-
-        self.builder
-            .build_store(ptr_field, array_alloca)
-            .map_err(|e| format!("Failed to store ptr: {:?}", e))?;
-
-        // Store size in field 1
-        let size_field = self
-            .builder
-            .build_struct_gep(array_struct_type, array_struct, 1, "array_size_field")
-            .map_err(|e| format!("Failed to get size field: {:?}", e))?;
-
-        let size_value = i64_type.const_int(size as u64, false);
-        self.builder
-            .build_store(size_field, size_value)
-            .map_err(|e| format!("Failed to store size: {:?}", e))?;
-
-        // Load and return the struct
-        self.builder
-            .build_load(array_struct_type, array_struct, "array")
-            .map_err(|e| format!("Failed to load array struct: {:?}", e))
+        // Build the { ptr, i64 } array struct value from the heap buffer.
+        self.array_struct(data_ptr, count)
     }
 
     /// Lower an array literal that contains one or more `<-` spreads (`[<-xs, 4, <-ys]`).

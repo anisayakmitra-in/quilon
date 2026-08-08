@@ -54,10 +54,12 @@
   assertEq(skipVals.size, 1)
   assertEq(skipVals[0], "real")
 
-  ~ A trailing option with no following value is present but supplies no value: Ok, empty.
+  ~ A trailing option with no following value collects nothing, so it is NotOk(name).
   trailArgs :: []Text = ["prog", "--out"]
-  trailPresent :: Bool = getOpt(trailArgs, "out") ? | Ok(_) => true | NotOk(_) => false
-  assert(trailPresent)
-  trailVals :: []Text = getOpt(trailArgs, "out") ? | Ok(vs) => vs | NotOk(_) => none
-  assertEq(trailVals.size, 0)
+  trailNotOk :: Bool = getOpt(trailArgs, "out") ? | Ok(_) => false | NotOk(_) => true
+  assert(trailNotOk)
+  ~ The `--name=` form always supplies a value (the empty string), so it stays Ok([""]).
+  eqEmpty :: []Text = getOpt(["prog", "--tag="], "tag") ? | Ok(vs) => vs | NotOk(_) => none
+  assertEq(eqEmpty.size, 1)
+  assertEq(eqEmpty[0], "")
 >
