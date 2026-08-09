@@ -52,6 +52,43 @@ fn run_simple_arithmetic() {
 }
 
 #[test]
+fn run_subtraction_and_multiplication() {
+    // Explicit end-to-end coverage for the `-` and `*` codegen arms. 1 + 2 = 3.
+    assert_exit(
+        "^ = () -> Num => (50 - 8 == 42 ? 1 : 0) + (6 * 7 == 42 ? 2 : 0)",
+        3,
+    );
+}
+
+#[test]
+fn run_unary_minus_and_double_negation() {
+    // `-x` negates; `-(-x)` round-trips back to the original value. 1 + 2 = 3.
+    assert_exit(
+        "^ = () -> Num => <\n  x = 5\n  y = (-x == -5 ? 1 : 0) + (-(-x) == 5 ? 2 : 0)\n  y\n>",
+        3,
+    );
+}
+
+#[test]
+fn run_division_and_mixed_fractional_arithmetic() {
+    // `/` produces fractions that keep working in further arithmetic, and
+    // integer/fractional literals mix freely. 1 + 2 + 4 + 8 = 15.
+    assert_exit(
+        "^ = () -> Num => (7 / 2 == 3.5 ? 1 : 0) + (7 / 2 + 7 / 2 == 7 ? 2 : 0) + (42 + 3.14 == 45.14 ? 4 : 0) + (2.5 * 4 == 10 ? 8 : 0)",
+        15,
+    );
+}
+
+#[test]
+fn run_arithmetic_precedence_and_parentheses() {
+    // `*` / `/` / `%` bind tighter than `+` / `-`; parentheses override. 1 + 2 + 4 + 8 = 15.
+    assert_exit(
+        "^ = () -> Num => (2 + 3 * 4 == 14 ? 1 : 0) + ((2 + 3) * 4 == 20 ? 2 : 0) + (10 - 6 / 2 == 7 ? 4 : 0) + (20 % 7 - 2 * 3 == 0 ? 8 : 0)",
+        15,
+    );
+}
+
+#[test]
 fn run_factorial() {
     // examples/factorial.ql -> factorial(5) = 120
     assert_exit(
