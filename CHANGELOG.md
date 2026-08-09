@@ -28,6 +28,11 @@ All notable changes to Quilon are documented here.
   at `run`/`build` with an internal "Unsupported binary operation" error. It now
   lowers to the f64 remainder (LLVM `frem`, i.e. C `fmod`): works on fractional
   operands, and the result takes the dividend's sign. (#73)
+- `&&` and `||` now actually short-circuit, as documented — the right operand
+  is evaluated only when the left does not already decide the result. They were
+  lowered as eager bitwise and/or, so `false && f(x)` ran `f`'s side effects and
+  the guard idiom `i < a.size && a[i] == k` always performed the (unchecked)
+  index. (#71)
 
 ## 0.9.0 — "Stable basics"
 
