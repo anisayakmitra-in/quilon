@@ -24,6 +24,11 @@ All notable changes to Quilon are documented here.
 
 ### Fixed
 
+- `&&` and `||` now actually short-circuit, as documented — the right operand
+  is evaluated only when the left does not already decide the result. They were
+  lowered as eager bitwise and/or, so `false && f(x)` ran `f`'s side effects and
+  the guard idiom `i < a.size && a[i] == k` always performed the (unchecked)
+  index. (#71)
 - A literal or nested constructor inside a constructor pattern (`Ok(1)`,
   `Ok(Ok(x))`) was accepted by the checker but silently ignored by codegen —
   the arm matched *any* payload of the variant, so the wrong arm could win with
