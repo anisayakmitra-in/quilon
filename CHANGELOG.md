@@ -24,6 +24,12 @@ All notable changes to Quilon are documented here.
 
 ### Fixed
 
+- A literal or nested constructor inside a constructor pattern (`Ok(1)`,
+  `Ok(Ok(x))`) was accepted by the checker but silently ignored by codegen —
+  the arm matched *any* payload of the variant, so the wrong arm could win with
+  no diagnostic. Such refutable sub-patterns are now a compile error (payload
+  sub-patterns must be a binding or `_`); bind the payload and compare it in the
+  arm body instead. (#70)
 - Codegen kept per-function state (`record_types`, `var_named_types`, and — on the
   method path — `var_types`) across function emissions, so a later function reusing
   a variable name could be silently miscompiled (e.g. an array parameter `p`'s
