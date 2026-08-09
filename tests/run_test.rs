@@ -763,7 +763,7 @@ fn unterminated_block_with_only_midline_gt_is_an_error() {
 
 #[test]
 fn logical_operators_short_circuit() {
-    // Issue #71: `&&`/`||` were lowered as EAGER bitwise and/or — both operands always
+    // `&&`/`||` were once lowered as EAGER bitwise and/or — both operands always
     // ran. The side-effecting right operand must run only when the left does not
     // already decide the result: here only bump(4) and bump(8) may run.
     assert_exit(
