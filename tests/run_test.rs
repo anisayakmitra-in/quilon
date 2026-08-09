@@ -763,9 +763,9 @@ fn unterminated_block_with_only_midline_gt_is_an_error() {
 
 #[test]
 fn modulo_works_end_to_end() {
-    // Issue #73: `%` was documented and type-checked but had NO codegen arm — it
-    // passed `check` and died at run/build with an internal error. It now lowers to
-    // the f64 remainder (LLVM frem == C fmod).
+    // `%` was once documented and type-checked but had NO codegen arm — it passed
+    // `check` and died at run/build with an internal error. It lowers to the f64
+    // remainder (LLVM frem == C fmod).
     assert_exit("^ = () -> Num => 7 % 3", 1);
 }
 
