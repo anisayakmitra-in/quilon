@@ -12,6 +12,13 @@ use inkwell::types::{BasicType, BasicTypeEnum};
 use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue, PointerValue};
 use std::collections::HashMap;
 
+/// Provenance watermark embedded in every native binary. Lowered as an `!llvm.ident`
+/// module metadata entry, which LLVM emits into the ELF `.comment` section during object
+/// generation (visible via `readelf -p .comment` and `strings`), coexisting with the
+/// toolchain's own producer string. A single compile-time constant so there is one source
+/// of truth, and no build-date/dynamic content so builds stay reproducible.
+pub(crate) const WATERMARK: &str = "Built with Quilon by Assaf Sapir - github.com/assapir/quilon";
+
 /// Names that the compiler provides built-in overloads for (`print`/`eprint`, lowered
 /// to runtime intrinsics). A user definition of one ADDS an overload member (and is
 /// mangled), rather than shadowing the built-in single-arg Num/Text/Bool forms.
@@ -492,6 +499,16 @@ impl<'ctx> CodeGenerator<'ctx> {
                 .unwrap_or_default();
             self.generate_main_wrapper(&entry_params)?;
         }
+
+        // Embed the provenance watermark as an `!llvm.ident` entry. LLVM lowers this into
+        // an ELF `.comment` string during object emission (readable via
+        // `readelf -p .comment` / `strings`), alongside the C toolchain's own producer
+        // signature. Harmless for the JIT path, which produces no artifact to carry it.
+        let ident = self.context.metadata_string(WATERMARK);
+        let ident_node = self.context.metadata_node(&[ident.into()]);
+        self.module
+            .add_global_metadata("llvm.ident", &ident_node)
+            .map_err(|e| format!("failed to embed watermark metadata: {e}"))?;
 
         // Verify the module
         if let Err(e) = self.module.verify() {

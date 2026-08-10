@@ -6,6 +6,16 @@ All notable changes to Quilon are documented here.
 
 ### Added
 
+- **Provenance watermark in native binaries.** Every executable `quilon build`
+  produces now carries a plaintext watermark —
+  `Built with Quilon by Assaf Sapir - github.com/assapir/quilon` — in the ELF
+  `.comment` section, next to the C toolchain's own producer string. It is
+  emitted as an `!llvm.ident` module metadata entry, which LLVM lowers into
+  `.comment` during object generation, so it survives linking. Inspect it with
+  `readelf -p .comment ./program` or `strings`. The string is a fixed
+  compile-time constant (no build date), builds stay reproducible, and there is
+  no runtime effect; `strip --strip-all` removes it. `quilon run` (JIT) produces
+  no artifact and so carries no watermark. (#45)
 - **Runtime-library exception (licensing).** The Quilon runtime (`quilon-rt`),
   which is statically linked and embedded into every binary `quilon build`
   produces, now carries a Classpath-style linking exception on top of GPLv2 (see

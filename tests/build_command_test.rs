@@ -79,6 +79,65 @@ fn build_hello_and_run(
     run.status.code()
 }
 
+/// The exact provenance watermark embedded in every native binary. Must match the
+/// single source-of-truth constant in codegen verbatim.
+const WATERMARK: &str = "Built with Quilon by Assaf Sapir - github.com/assapir/quilon";
+
+/// Does `haystack` contain `needle` as a contiguous byte subsequence?
+fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack.windows(needle.len()).any(|w| w == needle)
+}
+
+/// Every `quilon build` native binary carries the plaintext watermark in the ELF
+/// `.comment` section (issue #45). Preferred check is `readelf -p .comment`; when
+/// `readelf` is not on PATH we fall back to scanning the raw binary bytes for the
+/// ASCII string. Exercised under whichever linker is available.
+#[test]
+fn native_binary_carries_watermark() {
+    let Some(linker) = available_linker() else {
+        eprintln!("skipping watermark gate: need a linker (`clang` or `gcc`) on PATH");
+        return;
+    };
+
+    let quilon = Path::new(env!("CARGO_BIN_EXE_quilon"));
+    let out: PathBuf =
+        std::env::temp_dir().join(format!("quilon_issue45_hello_{}", std::process::id()));
+
+    let code = build_hello_and_run(quilon, linker, &out, "watermark build", |_| {});
+    assert_eq!(
+        code,
+        Some(0),
+        "hello_world native binary produced the wrong exit code"
+    );
+
+    if tool_available("readelf") {
+        let dump = Command::new("readelf")
+            .args(["-p", ".comment"])
+            .arg(&out)
+            .output()
+            .expect("run readelf -p .comment");
+        assert!(
+            dump.status.success(),
+            "readelf -p .comment failed: {}",
+            String::from_utf8_lossy(&dump.stderr)
+        );
+        let text = String::from_utf8_lossy(&dump.stdout);
+        assert!(
+            text.contains(WATERMARK),
+            "watermark not found in .comment section (linker={linker}); readelf output:\n{text}"
+        );
+    } else {
+        eprintln!("readelf not on PATH; falling back to raw byte scan");
+        let bytes = std::fs::read(&out).expect("read produced binary");
+        assert!(
+            contains_bytes(&bytes, WATERMARK.as_bytes()),
+            "watermark bytes not found anywhere in the produced binary (linker={linker})"
+        );
+    }
+
+    let _ = std::fs::remove_file(&out);
+}
+
 /// End-to-end: run `quilon build` on a real example WITHOUT copying the archive
 /// first, and assert the produced native binary runs and exits 0 (examples are
 /// self-asserting). This is the two-command README flow, exercised as written.

@@ -58,6 +58,13 @@ places one there), then the compressed copy embedded in the binary (see
 Prerequisites) — no extra step. Native builds link with `clang` by default;
 pass `--linker gcc` to use gcc instead.
 
+Every `quilon build` binary carries a small plaintext provenance watermark —
+`Built with Quilon by Assaf Sapir - github.com/assapir/quilon` — in the ELF
+`.comment` section, alongside the C toolchain's own producer string. Inspect it
+with `readelf -p .comment ./program` (or `strings`). It has no runtime effect and
+`strip --strip-all` removes it. `quilon run` (JIT) produces no artifact, so it has
+no watermark.
+
 ## Vision (aspirational)
 
 The longer-term goals that motivate the design — **not all implemented in 0.9**:
