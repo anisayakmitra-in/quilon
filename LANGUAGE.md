@@ -515,6 +515,38 @@ returns whatever it declares (so `Vec + Vec -> Vec`, `Vec * Num -> Vec`, or a `V
 > more on the same line, like `a > b` — is the greater-than operator. So `a > b` works
 > everywhere; the only rule is *don't end a line with a comparison `>`* (write the right
 > operand on the same line). `<=`/`>=`/`>>` are distinct tokens and unaffected.
+
+> **Statement boundaries — line-first `(` / `[` / `{`.** Quilon has no statement
+> separator, and the grammar is newline-insensitive except for **two** line-aware rules:
+> the line-final `>` above, and this one — a `(`, `[`, or `{` that is the **first token
+> on its line** never continues the previous expression as a call, index, or record
+> constructor; it begins a **new statement**. Call arguments, index brackets, and
+> constructor braces must open on the **same line** as the expression they apply to. A
+> continuation line may still start with `.`, `|>`, or an operator, and an argument list
+> (or a constructor body) opened on its expression's line may span lines.
+> ```quilon
+> ~ (statements inside a `< >` block / `^` body)
+> ~ OK — these all continue the expression:
+> sum = add(40,
+>   2)                                  ~ `(` opened on add's line; args may span lines
+> total = nums.map(n => n * 2)
+>   .reduce(0, (acc, n) => acc + n)     ~ `.`-led line chains
+> p = Point {
+>   x = 1, y = 2 }                      ~ `{` opened on Point's line; body may span lines
+>
+> ~ OK — a line-first `(`, `[`, or `{` is a NEW statement:
+> x = f()
+> (1 + 2) |> print                      ~ not the call `f()(1 + 2)`
+> b = a
+> [3, 4].each(n => print(n))            ~ not the index `a[3, 4]`
+> e = origin
+> { x = 9, y = 9 }                      ~ not the constructor `origin { x = 9, y = 9 }`
+>
+> ~ DON'T — a call may not open its argument list on the next line:
+> x = f
+> (10)                                  ~ NOT the call `f(10)`: `(10)` is a new statement
+> ```
+> (See `examples/statements.ql`.)
 - **Ternary:** `cond ? then : else`.
 - **Blocks:** `< stmt… last >` are expressions that evaluate to their last expression — usable anywhere a value is, not just as a function body:
 ```quilon

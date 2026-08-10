@@ -943,3 +943,91 @@ fn run_method_returning_array_is_usable() {
     // pair() = ["hi","hi"] (size 2); ps[1] = "hi" (size 2) -> 4.
     assert_exit(src, 4);
 }
+
+#[test]
+fn run_line_first_paren_is_new_statement() {
+    // Statement-boundary rule end-to-end: without it, `x = f()` followed by the line
+    // `(1 + 2) |> print` fused into the call `f()(1 + 2)` ("Not a function" on the
+    // wrong line). Now they are two statements: the pipeline prints 3, and the entry
+    // point exits with x = 7.
+    let src = r#"
+        << core.io
+        f = () -> Num => 7
+        ^ = () -> Num => <
+          x = f()
+          (1 + 2) |> print
+          x
+        >
+    "#;
+    assert_exit_linked(src, 7);
+}
+
+#[test]
+fn run_line_first_bracket_is_new_statement() {
+    // Same for `[`: `b = a` followed by a line `[3, 4].each(...)` used to fuse into
+    // the index `a[3, 4]`. Now `b` stays bound to `a` and the array line runs on its
+    // own; the entry point exits with b[1] = 2.
+    let src = r#"
+        << core.io
+        ^ = () -> Num => <
+          a = [1, 2]
+          b = a
+          [3, 4].each(x => print(x))
+          b[1]
+        >
+    "#;
+    assert_exit_linked(src, 2);
+}
+
+#[test]
+fn run_line_first_brace_is_new_statement() {
+    // Same for `{`: `b = a` followed by a line `{ x = 1 }` used to fuse into the record
+    // constructor `a { x = 1 }`. Now `b` stays bound to `a` and the brace line is its
+    // own record statement; the entry point exits with b.x = 5, not 1.
+    let src = r#"
+        Point = { x :: Num }
+        ^ = () -> Num => <
+          a = Point { x = 5 }
+          b = a
+          { x = 1 }
+          b.x
+        >
+    "#;
+    assert_exit(src, 5);
+}
+
+#[test]
+fn run_multiline_constructor_body_still_one_constructor() {
+    // The rule gates only a LINE-FIRST `{`: a `{` opened on the type's line is still a
+    // constructor, and its field body may span lines. Point { x=3, y=4 } -> 3 + 4 = 7.
+    let src = r#"
+        Point = { x :: Num, y :: Num }
+        ^ = () -> Num => <
+          p = Point {
+            x = 3,
+            y = 4
+          }
+          p.x + p.y
+        >
+    "#;
+    assert_exit(src, 7);
+}
+
+#[test]
+fn run_multiline_arguments_and_dot_chains_still_work() {
+    // The rule gates only a LINE-FIRST `(` / `[`: an argument list opened on the
+    // callee's line may span lines, and a continuation line starting with `.` still
+    // chains. add(40, 2) = 42; [1,2,3,4] doubled -> filtered >4 -> 6+8 = 14; 42+14=56.
+    let src = r#"
+        add = (a :: Num, b :: Num) -> Num => a + b
+        ^ = () -> Num => <
+          sum = add(40,
+            2)
+          chained = [1, 2, 3, 4].map(x => x * 2)
+            .filter(x => x > 4)
+            .reduce(0, (acc, x) => acc + x)
+          sum + chained
+        >
+    "#;
+    assert_exit(src, 56);
+}
