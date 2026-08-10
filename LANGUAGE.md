@@ -824,8 +824,6 @@ quilon build program.ql -o program       # default linker: clang
 quilon build program.ql --linker gcc      # gcc also supported (CI checks both)
 ./program; echo "exit: $?"
 ```
-Every `quilon build` binary carries a plaintext provenance watermark — `Built with Quilon by Assaf Sapir - github.com/assapir/quilon` — in the ELF `.comment` section (alongside the C toolchain's own producer string). Inspect it with `readelf -p .comment ./program` or `strings ./program`. It is cosmetic, has no runtime effect, and `strip --strip-all` removes it; `quilon run` (JIT) produces no artifact and so has no watermark.
-
 (During development, prefix any command with `cargo run --`, e.g. `cargo run -- run program.ql`.)
 
 ### Error messages
