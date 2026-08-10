@@ -3,7 +3,8 @@
   "displayName": "Quilon",
   "description": "Syntax highlighting and editor tasks for the Quilon programming language (.ql).",
   "version": "0.9.1",
-  "publisher": "quilon",
+  "publisher": "assapir",
+  "icon": "icon.png",
   "license": "GPL-2.0-only",
   "packageManager": "pnpm@11.20.0",
   "repository": {
