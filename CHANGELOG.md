@@ -2,7 +2,7 @@
 
 All notable changes to Quilon are documented here.
 
-## 0.9.1 — 2026-08-14 — "Stable basics, hardened"
+## 0.9.1 "Towel" — 2026-08-14 — "Stable basics, hardened"
 
 Everything merged since 0.9.0: the M1–M3 language-surface work (overloading, sum
 types, closures, ranges, spread, array/`Text` methods, `Unit`, guaranteed TCO,
