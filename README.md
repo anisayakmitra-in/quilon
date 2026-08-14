@@ -59,6 +59,14 @@ places one there), then the compressed copy embedded in the binary (see
 Prerequisites) — no extra step. Native builds link with `clang` by default;
 pass `--linker gcc` to use gcc instead.
 
+## Releasing
+
+Run `./scripts/release.sh` from a clean `main`. It reads the version from
+`Cargo.toml`, verifies `quilon-rt` matches and that `CHANGELOG.md` has a dated
+top-most section for it, runs the full gate, then tags `v<version>` and pushes
+it — which triggers CI to build and publish the GitHub release. Pass `--dry-run`
+to run every check and preview the tag without tagging or pushing.
+
 ## Vision (aspirational)
 
 The longer-term goals that motivate the design — **not all implemented in 0.9**:
