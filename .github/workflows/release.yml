@@ -49,18 +49,28 @@ jobs:
 
             A stable, verified **core** of the Quilon language — **not yet
             feature-complete**. Programs run via `quilon run` (in-process LLVM
-            JIT) or compile to native executables via `quilon build`.
+            JIT) or compile to a self-contained native executable via
+            `quilon build`.
 
-            Highlights: `^` entry point (implicit exit-0), `<<`/`>>` modules,
-            `|>` first-argument-injection pipe, `for n <- collection => body`
-            loops, the built-in `Text` type, `core.io` (`print`/`eprint`/`write`),
-            sum types with pattern matching, methods on records, and conservative
-            (Boehm) GC. Built against LLVM 22.
+            Highlights: `^` entry point (implicit exit-0; receives
+            `args :: []Text` / `env :: [][]Text`), `<<`/`>>` modules
+            (`core.io` / `core.test` / `core.cli`), `|>` first-argument-injection
+            pipe, the built-in `Text` type with methods, arrays with methods
+            (`map`/`filter`/`reduce`/`each`/`find`/`at`), ranges (`lo <- hi`),
+            spread (`<-`), and `+` concat, records with methods and in-place
+            mutation, user-defined sum types with exhaustive pattern matching and
+            typed `Num`/`Text`/`Bool` payloads, ad-hoc + operator overloading,
+            closures (`=` by-value / `:=` by-reference capture), guaranteed
+            self-tail-call optimization (constant-stack recursion), the `Unit`
+            type (`$`), and conservative (Boehm) GC. Built against LLVM 22.
 
-            **Known limitations:** no generics yet (so `Text`/non-numeric values
-            inside records, arrays, or `Ok`/`NotOk` payloads are unsupported — numeric
-            payloads work), no closures / `while` loops / user-defined sum types,
-            dynamic `libgc`, placeholder `argv`. See CHANGELOG.md for the full list.
+            **Known limitations:** no generics / type variables (ad-hoc
+            overloading is the only polymorphism), no `while` loops, no
+            higher-order use (an overloaded name or a closure passed as a value,
+            parameter, or return), no string interpolation. `libgc` is linked
+            dynamically. See CHANGELOG.md for the full list.
 
-            The attached `quilon` binary is a dynamically-linked Linux x86-64 build
-            (requires `libgc` at runtime).
+            The attached `quilon` binary is a dynamically-linked Linux x86-64
+            build (requires `libgc` at runtime); `quilon build` embeds its runtime
+            but still needs a C toolchain and `libgc` to link and run native
+            output.
