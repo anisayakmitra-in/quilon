@@ -59,8 +59,8 @@
         ],
         "configuration": "./language-configuration.json",
         "icon": {
-          "light": "./icons/ql-light.svg",
-          "dark": "./icons/ql-dark.svg"
+          "light": "./icons/ql-light.png",
+          "dark": "./icons/ql-dark.png"
         }
       }
     ],

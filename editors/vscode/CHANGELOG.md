@@ -34,3 +34,5 @@ Initial release. Version matches the Quilon compiler it targets.
 - Simplified the entry-point CodeLens to Run only; type-checking remains
   available through on-save inline diagnostics and the "Quilon: Check Current
   File" command.
+- Made the `.ql` file icon font-independent by shipping pre-rendered PNGs, so
+  the glyph renders correctly without the previously-embedded font installed.
