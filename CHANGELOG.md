@@ -92,9 +92,10 @@ between 0.9.0 and this one, so this section covers the whole span.
   unchanged and carries no debug info. This is **Phase 1**: line tables and
   per-function scopes only; local-variable and full-type debug info is a later
   phase. Known limitation: debug info covers the program's own source file only —
-  functions imported from other modules (`<<`) carry no line info, because a
-  `Span` records a byte offset without module-file identity; multi-file line info
-  is a follow-up. (#100)
+  functions imported from other modules (`<<`) carry no usable line info, because
+  the debug info holds a single compile unit and source text to resolve offsets
+  against; multi-file line info is a follow-up (source positions do now carry the
+  identity of the file they index into, so it has what it needs). (#100)
 - **Provenance watermark in native binaries.** Every executable `quilon build`
   produces now carries a plaintext watermark —
   `Built with Quilon by Assaf Sapir - github.com/assapir/quilon` — in the ELF
@@ -164,6 +165,26 @@ between 0.9.0 and this one, so this section covers the whole span.
 
 ### Fixed
 
+- An expression in the file you compile can no longer retype an expression inside
+  a module it imports. Every module is lexed on its own, so byte offsets restart
+  at 0 in each one; the per-expression types codegen reads back were keyed on the
+  byte range alone, so a range used in two files collided and the last one checked
+  won. A program whose own code happened to sit on a corelib expression's offsets
+  therefore passed `quilon check` and then failed to compile (`Function not
+  found`, or a leaked LLVM verifier dump) or, worse, dispatched a library call to
+  the wrong overload member and read a `Text` as a number. Source positions now
+  carry the identity of the file they index into, which keeps each module's types
+  its own; the offsets themselves are 32-bit, so a position stays smaller than
+  before and deep nesting keeps its stack headroom.
+- A self-tail-call whose argument type does not match the parameter slot it would
+  be stored into now compiles to an ordinary call instead of taking the loop
+  back-edge. Storing anyway wrote a wrong-sized value into the frame — silent
+  corruption if the call resolution that got there ever disagreed with the
+  declared parameter type. Arguments are still evaluated exactly once either way.
+  A new self-asserting `examples/overload_dispatch.ql` pins down dispatch on
+  argument types recovered from an array element, a match, a call, or a lambda —
+  including a self-recursive overload member that must reach itself, not its
+  sibling.
 - Array and range literals used in a self-tail-recursive loop no longer overflow
   the stack. Two codegen paths materialized an array's `{ptr, size}` struct
   through a raw `alloca` at the current insert point — array indexing (`arr[i]`,
