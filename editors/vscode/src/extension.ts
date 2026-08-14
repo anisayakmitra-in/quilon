@@ -196,14 +196,13 @@ function unparsedFailureDiagnostic(output: string): vscode.Diagnostic {
   return diagnostic;
 }
 
-// --- CodeLens: Run / Check above each `^` entry point ----------------------
+// --- CodeLens: Run above each `^` entry point ------------------------------
 
 /**
- * Places "▶ Run" and "Check" actions above every top-level `^` entry-point
- * definition. Both invoke the existing `quilon.run` / `quilon.check` commands,
- * which act on the active editor — and since the lens lives in that document,
- * clicking it (which focuses the doc) targets the right file without needing to
- * thread the URI through.
+ * Places a "▶ Run" action above every top-level `^` entry-point definition. It
+ * invokes the existing `quilon.run` command, which acts on the active editor —
+ * and since the lens lives in that document, clicking it (which focuses the doc)
+ * targets the right file without needing to thread the URI through.
  */
 class EntryPointCodeLensProvider implements vscode.CodeLensProvider {
   provideCodeLenses(document: vscode.TextDocument): vscode.CodeLens[] {
@@ -215,11 +214,6 @@ class EntryPointCodeLensProvider implements vscode.CodeLensProvider {
           title: "▶ Run",
           command: "quilon.run",
           tooltip: "Run this Quilon program",
-        }),
-        new vscode.CodeLens(range, {
-          title: "Check",
-          command: "quilon.check",
-          tooltip: "Type-check this Quilon program",
         }),
       );
     }

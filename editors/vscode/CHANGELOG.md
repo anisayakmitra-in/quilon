@@ -18,11 +18,19 @@ Initial release. Version matches the Quilon compiler it targets.
   runs `quilon check` on it, parses the compiler's `path:line:col: error:`
   output, and surfaces each error as an in-editor squiggle. Diagnostics update
   as you save and are cleared when a file checks clean.
-- **Run / Check CodeLens** — a "▶ Run" and a "Check" action appear above every
-  top-level `^` entry-point definition, invoking the compiler on the current
-  file in an integrated terminal.
+- **Run CodeLens** — a "▶ Run" action appears above every top-level `^`
+  entry-point definition, invoking the compiler on the current file in an
+  integrated terminal.
 - **Commands** — "Quilon: Check Current File" and "Quilon: Run Current File",
   available from the Command Palette.
 - **Configurable compiler invocation** via the `quilon.command` setting
   (defaults to `quilon` on your `PATH`; set it to e.g. `cargo run --` to drive
   the compiler from a checkout).
+- **File icon** for `.ql` files, contributed via the language `icon`
+  contribution (light and dark variants), shown by icon themes that defer to it.
+
+### Changed
+
+- Simplified the entry-point CodeLens to Run only; type-checking remains
+  available through on-save inline diagnostics and the "Quilon: Check Current
+  File" command.
