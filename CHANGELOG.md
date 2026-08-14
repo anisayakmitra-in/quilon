@@ -2,6 +2,36 @@
 
 All notable changes to Quilon are documented here.
 
+## Unreleased
+
+### Changed
+
+- **Breaking: every member of an overload set must annotate its return type**, as it
+  already had to annotate every parameter. A member's return type used to default to
+  `Num` when omitted and was corrected only after its body was checked, so what a call
+  saw depended on where it sat relative to the definition: a call above it resolved
+  against the `Num` placeholder and either passed `quilon check` only to fail at
+  runtime (`Overload not found: g$N`), or was rejected with a bogus complaint about a
+  type nobody wrote (`expected Text, got Num`). A member's signature is now fixed at
+  its definition, and the omission is reported instead — at the call that needed the
+  result type, or at the definition when nothing calls it:
+  `cannot call 'g': its overload member (Num) has no return type annotation — annotate
+  it, since exact dispatch needs the full signature`. This also makes a recursive
+  overload member expressible: annotate it and the self-call resolves. An unannotated
+  comparison-operator overload (`==`, `<=`, …) now asks for the annotation rather than
+  reporting that it must return `Bool`.
+- **Breaking: an overload member joins its set where it is written**, so a call resolves
+  only against the members above it — names resolve top to bottom, with no hoisting, the
+  same rule plain functions have always followed. Members used to be registered in a
+  pre-pass, so a call could resolve against a definition further down the file that
+  codegen then had no symbol for: a fully annotated program passed `quilon check` and
+  died with `Overload not found: odd$N`. Such a call is now a compile error
+  (`cannot call 'odd' before its definition — Quilon resolves names top to bottom; move
+  the definition above this call`). A definition is still in scope for its own body, so
+  self-recursion is unaffected; mutual recursion between top-level functions is not
+  expressible (it never worked — it only appeared to type-check). See
+  `examples/overload_dispatch.ql` and LANGUAGE.md's "Names resolve top to bottom".
+
 ## 0.9.1 "Towel" — 2026-08-14 — "Stable basics, hardened"
 
 Everything merged since 0.9.0: the M1–M3 language-surface work (overloading, sum
