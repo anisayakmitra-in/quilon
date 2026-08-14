@@ -1,0 +1,387 @@
+//! Self-tail-call optimization: the tail-position analysis and the loop lowering it
+//! enables (parameter slots plus a back-edge instead of a stack-growing call).
+//!
+//! Part of the LLVM code generator; see `super` for the `CodeGenerator` state these
+//! methods run against.
+
+use super::*;
+
+impl<'ctx> CodeGenerator<'ctx> {
+    // ---- Self-tail-call optimization (loop lowering) --------------------------------
+    //
+    // A call is in **tail position** when it is the value the enclosing function returns
+    // directly — i.e. nothing happens to its result before the `ret`. Tail position flows
+    // through exactly the constructs that yield a value as their tail without further
+    // computation: a block's last expression, both arms of an `if`/ternary, every arm of a
+    // `?`/`|` match, a parenthesizing pipeline's desugaring, and the function body itself.
+    // It does NOT flow into the operand of a `+`/`*`/comparison, a call argument, an array
+    // element, etc. — those consume the value, so a call there is not in tail position.
+    //
+    // `body_has_self_tail_call` is the pure analysis (no IR), used once to decide whether
+    // to set up the loop. `generate_tail_expr` is the codegen counterpart: it walks the
+    // SAME tail-position structure and, at a tail self-call, rewrites the param slots and
+    // branches to the loop header; everything else (and every non-tail subexpression) goes
+    // through the ordinary `generate_expr`. The two must agree on what "tail position" is.
+
+    /// Does `decl`'s body contain a self-call in tail position? Pure (emits no IR).
+    /// `self_symbol` is the LLVM symbol the function is emitted under (mangled if
+    /// overloaded) — passed in from `emit_module_function` so the "which symbol?" rule
+    /// lives in one place, and a tail call is recognized as a SELF-call by matching it.
+    pub(super) fn body_has_self_tail_call(&self, decl: &FunctionDecl, self_symbol: &str) -> bool {
+        self.expr_has_self_tail_call(&decl.body, self_symbol, decl.params.len())
+    }
+
+    /// Whether `expr`, evaluated in tail position, contains a self-call (to `self_symbol`
+    /// with `arity` args). Recurses only through tail-position sub-expressions.
+    pub(super) fn expr_has_self_tail_call(
+        &self,
+        expr: &Expr,
+        self_symbol: &str,
+        arity: usize,
+    ) -> bool {
+        match expr {
+            Expr::Call { .. } => self.is_self_tail_call(expr, self_symbol, arity),
+            Expr::Block { stmts, .. } => match stmts.last() {
+                Some(crate::ast::Statement::Expr(tail)) => {
+                    self.expr_has_self_tail_call(tail, self_symbol, arity)
+                }
+                _ => false,
+            },
+            Expr::If { then, else_, .. } => {
+                self.expr_has_self_tail_call(then, self_symbol, arity)
+                    || self.expr_has_self_tail_call(else_, self_symbol, arity)
+            }
+            Expr::Match { arms, .. } => arms
+                .iter()
+                .any(|arm| self.expr_has_self_tail_call(&arm.body, self_symbol, arity)),
+            // A pipeline desugars to a call; check the call it becomes.
+            Expr::Pipeline { left, right, span } => {
+                let call = Expr::desugar_pipeline(left, right, span);
+                self.is_self_tail_call(&call, self_symbol, arity)
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether `expr` is a direct call that resolves to `self_symbol` with `arity` args —
+    /// i.e. the function calling itself. Resolution mirrors `generate_call`'s: a plain
+    /// name maps to itself, an overloaded name to its exact mangled member by argument
+    /// types. A constructor/method/intrinsic call (which `generate_call` routes elsewhere)
+    /// is never a self-call. NB only the *callee identity* matters here; the arguments are
+    /// generated normally by `generate_tail_expr`.
+    pub(super) fn is_self_tail_call(&self, expr: &Expr, self_symbol: &str, arity: usize) -> bool {
+        let Expr::Call { func, args, .. } = expr else {
+            return false;
+        };
+        let Expr::Ident { name, .. } = func.as_ref() else {
+            return false;
+        };
+        if args.len() != arity {
+            return false;
+        }
+        // A name shadowed by a sum-type constructor or an intrinsic is not a self-call.
+        // The intrinsic names here MUST stay in sync with those intercepted in
+        // `generate_call` (`print`/`eprint`/`write`/`__exit`).
+        if self.sum_variants.contains_key(name.as_str())
+            || matches!(name.as_str(), "print" | "eprint" | "write" | "__exit")
+        {
+            return false;
+        }
+        let symbol = if self.overloads.contains_key(name.as_str()) {
+            let arg_types: Vec<Type> = args.iter().map(|a| self.infer_type(a)).collect();
+            match self.resolve_overload_symbol(name, &arg_types) {
+                Some(s) => s,
+                None => return false,
+            }
+        } else {
+            name.clone()
+        };
+        symbol == self_symbol
+    }
+
+    /// Emit `expr` in tail position under an active [`Tco`] context. Returns `Some(value)`
+    /// for an ordinary tail (the caller `ret`s it) or `None` when this path does not fall
+    /// through to a normal return — every tail exit was a self-call. **Invariant:** on
+    /// `None`, the current insert block is already TERMINATED (by the back-edge `br` of a
+    /// tail self-call, or an `unreachable` for an if/match all of whose arms recurse), so
+    /// the caller must not emit anything more into it. Walks the same tail-position
+    /// structure as `expr_has_self_tail_call`; any non-tail node falls through to
+    /// `generate_expr` (always `Some`).
+    pub(super) fn generate_tail_expr(
+        &mut self,
+        expr: &Expr,
+    ) -> Result<Option<BasicValueEnum<'ctx>>, String> {
+        let arity = self
+            .tco
+            .as_ref()
+            .expect("generate_tail_expr without a TCO context")
+            .param_slots
+            .len();
+
+        match expr {
+            // A pipeline in tail position is its desugared call; lower that.
+            Expr::Pipeline { left, right, span } => {
+                let call = Expr::desugar_pipeline(left, right, span);
+                self.generate_tail_expr(&call)
+            }
+
+            // A call in tail position: if it resolves to THIS function, lower it to the
+            // loop back-edge; otherwise it is an ordinary value. Clone `self_symbol` only
+            // here (a call leaf), not on every tail node. A `Some` from
+            // `emit_tail_self_call` means it declined the back-edge and emitted a plain
+            // call instead, whose value is an ordinary tail value.
+            Expr::Call { args, .. } => {
+                let self_symbol = self.tco.as_ref().unwrap().self_symbol.clone();
+                if self.is_self_tail_call(expr, &self_symbol, arity) {
+                    self.emit_tail_self_call(args)
+                } else {
+                    Ok(Some(self.generate_expr(expr)?))
+                }
+            }
+
+            Expr::Block { stmts, .. } => {
+                // Emit every statement normally except the tail expression, which stays in
+                // tail position. A non-`Expr`-tail block (ends in an item) has no tail call
+                // (the analysis returned false), so generating it whole is correct.
+                match stmts.split_last() {
+                    Some((crate::ast::Statement::Expr(tail), init)) => {
+                        for stmt in init {
+                            match stmt {
+                                crate::ast::Statement::Item(item) => self.generate_item(item)?,
+                                crate::ast::Statement::Expr(e) => {
+                                    self.generate_expr(e)?;
+                                }
+                            }
+                        }
+                        self.generate_tail_expr(tail)
+                    }
+                    _ => Ok(Some(self.generate_block(stmts)?)),
+                }
+            }
+
+            Expr::If {
+                cond, then, else_, ..
+            } => self.generate_tail_if(cond, then, else_),
+
+            Expr::Match {
+                expr: scrutinee,
+                arms,
+                ..
+            } => self.generate_tail_match(expr, scrutinee, arms),
+
+            // Anything else in tail position is an ordinary value.
+            other => Ok(Some(self.generate_expr(other)?)),
+        }
+    }
+
+    /// Lower a tail self-call: evaluate the argument expressions, write them into the
+    /// parameter slots, then `br` back to the loop header — returning `None`, since this
+    /// path never falls through to a return. All args are evaluated into temporaries
+    /// BEFORE any slot is overwritten, so an argument that reads a parameter (e.g.
+    /// `f(n - 1, acc + n)` reading `n` for `acc`) sees the current iteration's values,
+    /// not a half-updated set.
+    ///
+    /// A slot only accepts a value of its parameter's type, and the values arrive here on
+    /// the strength of a call resolution made from *inferred* argument types. Should that
+    /// inference ever disagree with the declared type, storing anyway would write the
+    /// wrong-sized value into the frame — silent corruption. So the values are checked
+    /// against the function's own signature (the slots were built from the same
+    /// declaration, in order) and a mismatch declines the loop: the already-evaluated
+    /// values — each argument is evaluated exactly once, whichever way this goes — are
+    /// passed to an ordinary call to the same function, and its result becomes the tail
+    /// value. Recursion depth is then bounded by the stack again for that call, which is
+    /// the conservative half of the trade.
+    pub(super) fn emit_tail_self_call(
+        &mut self,
+        args: &[Expr],
+    ) -> Result<Option<BasicValueEnum<'ctx>>, String> {
+        let new_vals: Vec<BasicValueEnum<'ctx>> = args
+            .iter()
+            .map(|a| self.generate_expr(a))
+            .collect::<Result<Vec<_>, _>>()?;
+        let tco = self
+            .tco
+            .as_ref()
+            .expect("emit_tail_self_call without a TCO context");
+        let slots_fit = tco
+            .function
+            .get_params()
+            .iter()
+            .zip(&new_vals)
+            .all(|(param, val)| val.get_type() == param.get_type());
+        if !slots_fit {
+            let function = tco.function;
+            return self.emit_call(function, &new_vals).map(Some);
+        }
+        // Snapshot slots + header before the mutable stores (releases the `self.tco`
+        // borrow so the `&mut self` builder calls below are allowed).
+        let slots: Vec<PointerValue<'ctx>> = tco.param_slots.clone();
+        let header = tco.header;
+        for (slot, val) in slots.iter().zip(new_vals) {
+            self.builder
+                .build_store(*slot, val)
+                .map_err(ctx("Failed to store tail-call arg"))?;
+        }
+        self.builder
+            .build_unconditional_branch(header)
+            .map_err(ctx("Failed to branch to loop header"))?;
+        Ok(None)
+    }
+
+    /// Tail-position `if`/ternary: emit each arm in tail position. An arm that tail-recurses
+    /// branches to the loop header (yields no value); an arm that produces a value branches
+    /// to a merge block. We `phi` only over the value-producing arms — if both arms tail
+    /// self-call, there is no merge value and we return `None`.
+    pub(super) fn generate_tail_if(
+        &mut self,
+        cond: &Expr,
+        then_expr: &Expr,
+        else_expr: &Expr,
+    ) -> Result<Option<BasicValueEnum<'ctx>>, String> {
+        let cond_val = self.generate_expr(cond)?;
+        let BasicValueEnum::IntValue(cond_bool) = cond_val else {
+            return Err("Condition must be a boolean".to_string());
+        };
+        let function = self
+            .current_function
+            .ok_or_else(|| "If expression outside of function".to_string())?;
+
+        let then_bb = self.context.append_basic_block(function, "then");
+        let else_bb = self.context.append_basic_block(function, "else");
+        let merge_bb = self.context.append_basic_block(function, "ifcont");
+
+        self.builder
+            .build_conditional_branch(cond_bool, then_bb, else_bb)
+            .map_err(ctx("Failed to build conditional branch"))?;
+
+        // Collect each non-tail-recursing arm's (value, originating block) for the phi.
+        let mut incoming: Vec<(BasicValueEnum<'ctx>, inkwell::basic_block::BasicBlock<'ctx>)> =
+            Vec::new();
+
+        self.builder.position_at_end(then_bb);
+        if let Some(v) = self.generate_tail_expr(then_expr)? {
+            let bb = self.builder.get_insert_block().unwrap();
+            self.builder
+                .build_unconditional_branch(merge_bb)
+                .map_err(ctx("Failed to build branch"))?;
+            incoming.push((v, bb));
+        }
+
+        self.builder.position_at_end(else_bb);
+        if let Some(v) = self.generate_tail_expr(else_expr)? {
+            let bb = self.builder.get_insert_block().unwrap();
+            self.builder
+                .build_unconditional_branch(merge_bb)
+                .map_err(ctx("Failed to build branch"))?;
+            incoming.push((v, bb));
+        }
+
+        self.builder.position_at_end(merge_bb);
+        match incoming.as_slice() {
+            // Both arms tail-recursed: control never reaches the merge block. Terminate it
+            // as `unreachable` (it has no value-producing predecessors) and report `None`
+            // — every `None` from a tail node leaves the current block already terminated.
+            [] => {
+                self.builder
+                    .build_unreachable()
+                    .map_err(ctx("Failed to build unreachable"))?;
+                Ok(None)
+            }
+            _ => {
+                let phi = self
+                    .builder
+                    .build_phi(incoming[0].0.get_type(), "iftmp")
+                    .map_err(ctx("Failed to build phi"))?;
+                for (v, bb) in &incoming {
+                    phi.add_incoming(&[(v as &dyn BasicValue, *bb)]);
+                }
+                Ok(Some(phi.as_basic_value()))
+            }
+        }
+    }
+
+    /// Tail-position `?`/`|` match: same shape as `generate_match`, but each arm body is
+    /// emitted in tail position. An arm that tail-recurses branches to the loop header and
+    /// stores nothing; an arm that yields a value stores it into the shared result slot and
+    /// falls through to the continuation. If EVERY arm tail-recurses, the continuation is
+    /// unreachable and we return `None` (no result to load).
+    pub(super) fn generate_tail_match(
+        &mut self,
+        match_expr: &Expr,
+        scrutinee: &Expr,
+        arms: &[MatchArm],
+    ) -> Result<Option<BasicValueEnum<'ctx>>, String> {
+        let match_val = self.generate_expr(scrutinee)?;
+        let function = self
+            .current_function
+            .ok_or_else(|| "Match expression must be in a function".to_string())?;
+
+        let mut arm_blocks = vec![];
+        let mut check_blocks = vec![];
+        for i in 0..arms.len() {
+            check_blocks.push(
+                self.context
+                    .append_basic_block(function, &format!("check_{}", i)),
+            );
+            arm_blocks.push(
+                self.context
+                    .append_basic_block(function, &format!("arm_{}", i)),
+            );
+        }
+        let cont_block = self.context.append_basic_block(function, "match_cont");
+
+        // Result slot for the value-producing (non-tail-recursing) arms, sized from the
+        // oracle exactly as `generate_match` does. Only written by arms that yield a value.
+        let result_llvm = self.oracle_value_type(match_expr)?;
+        let result_alloca = self.create_entry_block_alloca("match_result", result_llvm)?;
+
+        self.builder
+            .build_unconditional_branch(check_blocks[0])
+            .map_err(ctx("Failed to build branch"))?;
+
+        let mut any_value_arm = false;
+        for (i, arm) in arms.iter().enumerate() {
+            self.builder.position_at_end(check_blocks[i]);
+            let matches = self.check_pattern(&arm.pattern, match_val)?;
+            let next_block = if i + 1 < check_blocks.len() {
+                check_blocks[i + 1]
+            } else {
+                cont_block
+            };
+            self.builder
+                .build_conditional_branch(matches, arm_blocks[i], next_block)
+                .map_err(ctx("Failed to build conditional branch"))?;
+
+            self.builder.position_at_end(arm_blocks[i]);
+            self.bind_pattern(&arm.pattern, match_val, scrutinee)?;
+            if let Some(arm_val) = self.generate_tail_expr(&arm.body)? {
+                any_value_arm = true;
+                self.builder
+                    .build_store(result_alloca, arm_val)
+                    .map_err(ctx("Failed to store result"))?;
+                self.builder
+                    .build_unconditional_branch(cont_block)
+                    .map_err(ctx("Failed to build branch"))?;
+            }
+            // Else: the arm tail-recursed and already branched to the loop header.
+        }
+
+        self.builder.position_at_end(cont_block);
+        if any_value_arm {
+            Ok(Some(
+                self.builder
+                    .build_load(result_llvm, result_alloca, "match_result")
+                    .map_err(ctx("Failed to load result"))?,
+            ))
+        } else {
+            // Every arm tail-recursed: control never produces a value here (the only edge
+            // into `cont_block` is the last check's no-match fallthrough, which an
+            // exhaustive match never takes). Terminate it as `unreachable` and report
+            // `None` — keeping the "a `None` leaves the block terminated" invariant.
+            self.builder
+                .build_unreachable()
+                .map_err(ctx("Failed to build unreachable"))?;
+            Ok(None)
+        }
+    }
+}

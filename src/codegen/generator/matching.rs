@@ -1,0 +1,256 @@
+//! `?`/`|` pattern matching: testing a scrutinee against each arm's pattern and binding
+//! what the pattern names.
+//!
+//! Part of the LLVM code generator; see `super` for the `CodeGenerator` state these
+//! methods run against.
+
+use super::*;
+
+impl<'ctx> CodeGenerator<'ctx> {
+    /// Lower a `match` (`scrutinee ? | pat => body ...`). `match_expr` is the whole
+    /// `Expr::Match` node (used only to look up the match's result type in the oracle);
+    /// `scrutinee` is the value being matched.
+    pub(super) fn generate_match(
+        &mut self,
+        match_expr: &Expr,
+        scrutinee: &Expr,
+        arms: &[MatchArm],
+    ) -> Result<BasicValueEnum<'ctx>, String> {
+        // Evaluate the expression being matched
+        let match_val = self.generate_expr(scrutinee)?;
+
+        // Get the current function
+        let function = self
+            .current_function
+            .ok_or_else(|| "Match expression must be in a function".to_string())?;
+
+        // Create basic blocks for each arm and a continuation block
+        let mut arm_blocks = vec![];
+        let mut check_blocks = vec![];
+        for i in 0..arms.len() {
+            check_blocks.push(
+                self.context
+                    .append_basic_block(function, &format!("check_{}", i)),
+            );
+            arm_blocks.push(
+                self.context
+                    .append_basic_block(function, &format!("arm_{}", i)),
+            );
+        }
+        let cont_block = self.context.append_basic_block(function, "match_cont");
+
+        // The result type of the match (the common type of its arm bodies) comes from
+        // the type oracle — NOT a hardcoded `f64` — so a match yielding `Text` (e.g. the
+        // `Ok(text)` payload) allocates and loads a `Text` struct rather than corrupting
+        // it through an f64 slot. Falls back to `f64` if the oracle didn't record it.
+        let result_llvm = self.oracle_value_type(match_expr)?;
+        let result_alloca = self.create_entry_block_alloca("match_result", result_llvm)?;
+
+        // Jump to first check
+        self.builder
+            .build_unconditional_branch(check_blocks[0])
+            .map_err(ctx("Failed to build branch"))?;
+
+        // Generate code for each arm
+        for (i, arm) in arms.iter().enumerate() {
+            // Position at check block
+            self.builder.position_at_end(check_blocks[i]);
+
+            // Check if pattern matches
+            let matches = self.check_pattern(&arm.pattern, match_val)?;
+
+            // Conditional branch to arm or next check
+            let next_block = if i + 1 < check_blocks.len() {
+                check_blocks[i + 1]
+            } else {
+                // Last arm - if it doesn't match, it's an error
+                // For now, just go to continuation with a default value
+                cont_block
+            };
+
+            self.builder
+                .build_conditional_branch(matches, arm_blocks[i], next_block)
+                .map_err(ctx("Failed to build conditional branch"))?;
+
+            // Generate arm body
+            self.builder.position_at_end(arm_blocks[i]);
+
+            // Bind pattern variables
+            self.bind_pattern(&arm.pattern, match_val, scrutinee)?;
+
+            let arm_val = self.generate_expr(&arm.body)?;
+            self.builder
+                .build_store(result_alloca, arm_val)
+                .map_err(ctx("Failed to store result"))?;
+
+            self.builder
+                .build_unconditional_branch(cont_block)
+                .map_err(ctx("Failed to build branch"))?;
+        }
+
+        // Position at continuation block
+        self.builder.position_at_end(cont_block);
+
+        // Load the result with the match's declared result type (see `result_llvm`).
+        self.builder
+            .build_load(result_llvm, result_alloca, "match_result")
+            .map_err(ctx("Failed to load result"))
+    }
+
+    pub(super) fn check_pattern(
+        &mut self,
+        pattern: &Pattern,
+        value: BasicValueEnum<'ctx>,
+    ) -> Result<inkwell::values::IntValue<'ctx>, String> {
+        match pattern {
+            Pattern::Wildcard { .. } => {
+                // Wildcard always matches
+                Ok(self.context.bool_type().const_all_ones())
+            }
+
+            Pattern::Ident { .. } => {
+                // Identifier pattern always matches (binds the value)
+                Ok(self.context.bool_type().const_all_ones())
+            }
+
+            Pattern::Number { value: num_val, .. } => {
+                // Compare the value
+                if let BasicValueEnum::FloatValue(fval) = value {
+                    let const_val = self.context.f64_type().const_float(*num_val);
+                    self.builder
+                        .build_float_compare(
+                            inkwell::FloatPredicate::OEQ,
+                            fval,
+                            const_val,
+                            "num_match",
+                        )
+                        .map_err(ctx("Failed to build comparison"))
+                } else {
+                    Ok(self.context.bool_type().const_zero())
+                }
+            }
+
+            Pattern::Constructor { name, .. } => {
+                // Tagged-union dispatch: a value is `{ i8 tag, <payload> }`; the tag is
+                // the variant's declaration index, looked up from the sum-variant
+                // registry (generalizes the old hardcoded Ok=0/NotOk=1).
+                let expected_tag = self
+                    .sum_variants
+                    .get(name.as_str())
+                    .map(|(tag, _)| *tag)
+                    .ok_or_else(|| format!("Unknown constructor: {}", name))?;
+
+                // Extract tag from struct (field 0)
+                if let BasicValueEnum::StructValue(struct_val) = value {
+                    let tag_val = self
+                        .builder
+                        .build_extract_value(struct_val, 0, "tag")
+                        .map_err(ctx("Failed to extract tag"))?
+                        .into_int_value();
+
+                    let expected_tag_val =
+                        self.context.i8_type().const_int(expected_tag as u64, false);
+
+                    self.builder
+                        .build_int_compare(
+                            inkwell::IntPredicate::EQ,
+                            tag_val,
+                            expected_tag_val,
+                            "tag_match",
+                        )
+                        .map_err(ctx("Failed to compare tags"))
+                } else {
+                    // Not a struct - pattern doesn't match
+                    Ok(self.context.bool_type().const_zero())
+                }
+            }
+        }
+    }
+
+    /// Concrete per-value payload types for the matched constructor `variant`, read from
+    /// the SCRUTINEE's oracle type. A scrutinee inferred as `Result[Ok(Text)]` (from
+    /// `Ok("x")`) yields `[Text]` for `Ok`, so a payload binding can record its REAL type
+    /// for overload mangling — unlike the declared `variant_payloads`, whose `Result`
+    /// slots are `Generic` (which would mis-mangle to the `Num` member). `None` when the
+    /// oracle has no concrete `Sum` type for the scrutinee.
+    pub(super) fn scrutinee_payload_types(
+        &self,
+        scrutinee: &Expr,
+        variant: &str,
+    ) -> Option<Vec<Type>> {
+        match self.oracle.expr_type(scrutinee)? {
+            Type::Sum { variants, .. } => variants
+                .iter()
+                .find(|v| v.name == variant)
+                .map(|v| v.fields.clone()),
+            _ => None,
+        }
+    }
+
+    pub(super) fn bind_pattern(
+        &mut self,
+        pattern: &Pattern,
+        value: BasicValueEnum<'ctx>,
+        scrutinee: &Expr,
+    ) -> Result<(), String> {
+        match pattern {
+            Pattern::Ident { name, .. } => {
+                // Bind the value to the identifier
+                let alloca = self.create_entry_block_alloca(name, value.get_type())?;
+                self.builder
+                    .build_store(alloca, value)
+                    .map_err(ctx("Failed to store pattern binding"))?;
+                self.variables
+                    .insert(name.clone(), (alloca, value.get_type()));
+                Ok(())
+            }
+
+            Pattern::Constructor { name, args, .. } => {
+                // Extract each payload field and bind it to the corresponding sub-pattern.
+                // The value is `{ i8 tag, payload0, payload1, ... }`, so payload `i` is
+                // struct field `i + 1`. Only identifier sub-patterns bind a name; others
+                // (wildcards, nested constructors) are matched structurally elsewhere.
+                //
+                // Each payload binding records its Quilon type in `var_types` (the map
+                // that mangles an overloaded call on the binding, e.g.
+                // `Ok(s) => describe(s)`), taken from the first NON-generic of two ordered
+                // sources:
+                //  - the SCRUTINEE's oracle type, whose `Result` payload was specialized
+                //    per value (`Ok("x")` => `Result[Ok(Text)]`), so `s` binds as `Text`;
+                //  - else the variant's declared payloads (`variant_payloads`), concrete
+                //    for a USER sum type (`Circle(Num)`) but `Generic` for `Result`.
+                // A still-`Generic` payload is left untracked — an untracked binding
+                // defaults to `Num` (the historical behavior), rather than mis-mangling.
+                if let BasicValueEnum::StructValue(struct_val) = value {
+                    let concrete = self.scrutinee_payload_types(scrutinee, name);
+                    let declared = self.variant_payloads.get(name).cloned();
+                    for (i, arg) in args.iter().enumerate() {
+                        if let Pattern::Ident { name: arg_name, .. } = arg {
+                            let payload = self
+                                .builder
+                                .build_extract_value(struct_val, (i + 1) as u32, "payload")
+                                .map_err(ctx("Failed to extract payload"))?;
+                            let alloca =
+                                self.create_entry_block_alloca(arg_name, payload.get_type())?;
+                            self.builder
+                                .build_store(alloca, payload)
+                                .map_err(ctx("Failed to store constructor arg"))?;
+                            self.variables
+                                .insert(arg_name.clone(), (alloca, payload.get_type()));
+                            let payload_ty = [&concrete, &declared]
+                                .into_iter()
+                                .filter_map(|src| src.as_ref()?.get(i))
+                                .find(|t| !matches!(t, Type::Generic { .. }));
+                            if let Some(ty) = payload_ty {
+                                self.var_types.insert(arg_name.clone(), ty.clone());
+                            }
+                        }
+                    }
+                }
+                Ok(())
+            }
+
+            _ => Ok(()), // Other patterns don't bind variables
+        }
+    }
+}
