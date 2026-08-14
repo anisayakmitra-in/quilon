@@ -131,7 +131,7 @@ test("single < and > stay comparison operators when not line-final", () => {
   assert.equal(gt.scope, "keyword.operator.comparison.quilon");
 });
 
-// Issue #33: the block-closing `>` (a `>` that is the last token on its line)
+// The block-closing `>` (a `>` that is the last token on its line)
 // was colored differently from the opening `<` — red, as if invalid. Both block
 // delimiters must be block punctuation and share one scope family, so a theme
 // colors them identically. The block-close rule mirrors the compiler

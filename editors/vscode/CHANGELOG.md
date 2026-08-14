@@ -13,7 +13,12 @@ Initial release. Version matches the Quilon compiler it targets.
 
 - **Syntax highlighting** for Quilon (`.ql`) source files, driven by a
   TextMate grammar covering the language's symbol-based syntax (entry points,
-  pattern matching, pipelines, comments, records, and sum types).
+  pattern matching, pipelines, comments, records, and sum types). Every
+  multi-character operator (`->`, `=>`, `<-`, `|>`, `::`, `:=`, `==`, `!=`,
+  `<=`, `>=`, `&&`, `||`) is a single token with a single scope, so it renders
+  in one color and never splits mid-glyph. A line-final `<`/`>` is scoped as
+  block punctuation on a safe best-effort basis; fully correct block `< >`
+  coloring needs semantic tokens / an LSP and is deferred.
 - **Inline diagnostics** — on open and on save of a `.ql` file, the extension
   runs `quilon check` on it, parses the compiler's `path:line:col: error:`
   output, and surfaces each error as an in-editor squiggle. Diagnostics update
@@ -28,6 +33,17 @@ Initial release. Version matches the Quilon compiler it targets.
   the compiler from a checkout).
 - **File icon** for `.ql` files, contributed via the language `icon`
   contribution (light and dark variants), shown by icon themes that defer to it.
+
+### Fixed
+
+- **Operator coloring** — every multi-character operator (`->`, `=>`, `<-`,
+  `|>`, `::`, `:=`, `==`, `!=`, `<=`, `>=`, `&&`, `||`) now tokenizes as a
+  single token with a single scope, so it renders in one color and no longer
+  splits mid-glyph (which also broke ligatures). The grammar lists every
+  multi-char operator rule before the single-char rules it shares a prefix with,
+  since TextMate is first-match-wins at each position. A line-final `<`/`>` is
+  scoped as block punctuation on a safe best-effort basis; fully correct block
+  `< >` coloring needs semantic tokens / an LSP and is deferred.
 
 ### Changed
 
