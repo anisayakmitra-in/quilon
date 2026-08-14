@@ -268,6 +268,11 @@ struct Tco<'ctx> {
     /// The LLVM symbol of the function being optimized (mangled if overloaded). A `Call`
     /// is a self-tail-call only if it resolves to exactly this symbol with matching arity.
     self_symbol: String,
+    /// The function being optimized — the one a declined back-edge calls instead. Held as
+    /// a value so that path needs no lookup: the callee of a *self*-call is never in doubt.
+    /// Its parameter types are also the slot types (both come from the same declaration,
+    /// in order), which is what `emit_tail_self_call` checks its argument values against.
+    function: FunctionValue<'ctx>,
     /// The function's parameter alloca slots, in declaration order. A tail self-call
     /// recomputes the args and rewrites these slots (its length is the arity).
     param_slots: Vec<PointerValue<'ctx>>,
@@ -300,13 +305,13 @@ struct Tco<'ctx> {
 /// `None` means the span wasn't recorded (e.g. the IR-only codegen tests that skip the
 /// type-check pass); callers fall back to their historical `f64` assumption.
 ///
-/// LIMITATION (tracked for a later M-wave): a `Span` is a byte range with no file/module
-/// identity, and the `<<` import system lexes each module independently (offsets restart
-/// at 0) before merging items into one `Program`. Two expressions in different modules can
-/// therefore share a span and collide in the table (last-inferred wins). Today's imported
-/// modules are numeric helpers/intrinsics with no composite reads, so this is latent, not
-/// live; the robust fix is a stable per-node id (or a `(module, span)` key) assigned at
-/// parse time. Until then, the oracle is only fully sound for single-file programs.
+/// A `Span` is a byte range plus the identity of the file it indexes into, which is what
+/// makes it a sound key here: the `<<` import system lexes each module independently
+/// (offsets restart at 0) before merging items into one `Program`, so two expressions in
+/// different modules routinely share a byte range. Keyed on the range alone they would
+/// collide in the table (last-inferred wins) and codegen would read one module's type for
+/// another module's expression — a wrong overload member, a wrong element repr. The file
+/// id keeps every node's key distinct across the merge.
 #[derive(Default)]
 struct TypeOracle {
     table: crate::typechecker::TypeTable,
@@ -635,7 +640,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // The generated wrapper has no source of its own; attribute it to the file header so
         // its instructions (GC init, the call into `^`) carry a valid debug location — the
         // verifier requires one on a call to a function that itself has debug info.
-        let main_span = Span::new(0, 0);
+        let main_span = Span::in_root(0, 0);
         let saved_scope = self.begin_di_function(main_fn, "main", &main_span);
         let argc = main_fn.get_nth_param(0).unwrap().into_int_value();
         let argv = main_fn.get_nth_param(1).unwrap().into_pointer_value();
@@ -1233,6 +1238,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             self.builder.position_at_end(header);
             self.tco = Some(Tco {
                 self_symbol: symbol.clone(),
+                function,
                 param_slots,
                 header,
             });
@@ -1384,12 +1390,13 @@ impl<'ctx> CodeGenerator<'ctx> {
 
             // A call in tail position: if it resolves to THIS function, lower it to the
             // loop back-edge; otherwise it is an ordinary value. Clone `self_symbol` only
-            // here (a call leaf), not on every tail node.
+            // here (a call leaf), not on every tail node. A `Some` from
+            // `emit_tail_self_call` means it declined the back-edge and emitted a plain
+            // call instead, whose value is an ordinary tail value.
             Expr::Call { args, .. } => {
                 let self_symbol = self.tco.as_ref().unwrap().self_symbol.clone();
                 if self.is_self_tail_call(expr, &self_symbol, arity) {
-                    self.emit_tail_self_call(args)?;
-                    Ok(None)
+                    self.emit_tail_self_call(args)
                 } else {
                     Ok(Some(self.generate_expr(expr)?))
                 }
@@ -1431,21 +1438,46 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
 
     /// Lower a tail self-call: evaluate the argument expressions, write them into the
-    /// parameter slots, then `br` back to the loop header. All args are evaluated into
-    /// temporaries BEFORE any slot is overwritten, so an argument that reads a parameter
-    /// (e.g. `f(n - 1, acc + n)` reading `n` for `acc`) sees the current iteration's
-    /// values, not a half-updated set.
-    fn emit_tail_self_call(&mut self, args: &[Expr]) -> Result<(), String> {
+    /// parameter slots, then `br` back to the loop header — returning `None`, since this
+    /// path never falls through to a return. All args are evaluated into temporaries
+    /// BEFORE any slot is overwritten, so an argument that reads a parameter (e.g.
+    /// `f(n - 1, acc + n)` reading `n` for `acc`) sees the current iteration's values,
+    /// not a half-updated set.
+    ///
+    /// A slot only accepts a value of its parameter's type, and the values arrive here on
+    /// the strength of a call resolution made from *inferred* argument types. Should that
+    /// inference ever disagree with the declared type, storing anyway would write the
+    /// wrong-sized value into the frame — silent corruption. So the values are checked
+    /// against the function's own signature (the slots were built from the same
+    /// declaration, in order) and a mismatch declines the loop: the already-evaluated
+    /// values — each argument is evaluated exactly once, whichever way this goes — are
+    /// passed to an ordinary call to the same function, and its result becomes the tail
+    /// value. Recursion depth is then bounded by the stack again for that call, which is
+    /// the conservative half of the trade.
+    fn emit_tail_self_call(
+        &mut self,
+        args: &[Expr],
+    ) -> Result<Option<BasicValueEnum<'ctx>>, String> {
         let new_vals: Vec<BasicValueEnum<'ctx>> = args
             .iter()
             .map(|a| self.generate_expr(a))
             .collect::<Result<Vec<_>, _>>()?;
-        // Snapshot slots + header before the mutable stores (releases the `self.tco`
-        // borrow so the `&mut self` builder calls below are allowed).
         let tco = self
             .tco
             .as_ref()
             .expect("emit_tail_self_call without a TCO context");
+        let slots_fit = tco
+            .function
+            .get_params()
+            .iter()
+            .zip(&new_vals)
+            .all(|(param, val)| val.get_type() == param.get_type());
+        if !slots_fit {
+            let function = tco.function;
+            return self.emit_call(function, &new_vals).map(Some);
+        }
+        // Snapshot slots + header before the mutable stores (releases the `self.tco`
+        // borrow so the `&mut self` builder calls below are allowed).
         let slots: Vec<PointerValue<'ctx>> = tco.param_slots.clone();
         let header = tco.header;
         for (slot, val) in slots.iter().zip(new_vals) {
@@ -1456,7 +1488,24 @@ impl<'ctx> CodeGenerator<'ctx> {
         self.builder
             .build_unconditional_branch(header)
             .map_err(|e| format!("Failed to branch to loop header: {:?}", e))?;
-        Ok(())
+        Ok(None)
+    }
+
+    /// Emit a call to `function` with argument values that are already generated, and
+    /// yield its result. The one place a direct call is built, shared by `generate_call`
+    /// (which resolves the callee from a name) and the tail-call lowering.
+    fn emit_call(
+        &mut self,
+        function: inkwell::values::FunctionValue<'ctx>,
+        arg_values: &[BasicValueEnum<'ctx>],
+    ) -> Result<BasicValueEnum<'ctx>, String> {
+        let arg_metadata: Vec<inkwell::values::BasicMetadataValueEnum> =
+            arg_values.iter().map(|v| (*v).into()).collect();
+        let call_site = self
+            .builder
+            .build_call(function, &arg_metadata, "calltmp")
+            .map_err(|e| format!("Failed to build call: {:?}", e))?;
+        Self::call_result_to_basic(call_site)
     }
 
     /// Tail-position `if`/ternary: emit each arm in tail position. An arm that tail-recurses
@@ -3040,17 +3089,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             .map(|arg| self.generate_expr(arg))
             .collect::<Result<Vec<_>, _>>()?;
 
-        // Convert to BasicMetadataValueEnum for the call
-        let arg_metadata: Vec<inkwell::values::BasicMetadataValueEnum> =
-            arg_values.iter().map(|v| (*v).into()).collect();
-
-        // Build the call
-        let call_site = self
-            .builder
-            .build_call(function, &arg_metadata, "calltmp")
-            .map_err(|e| format!("Failed to build call: {:?}", e))?;
-
-        Self::call_result_to_basic(call_site)
+        self.emit_call(function, &arg_values)
     }
 
     /// Call a closure value held in local variable `var_name`: extract the function and
