@@ -5,6 +5,23 @@ All notable changes to the Quilon VS Code extension are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Debugging** via [CodeLLDB](https://marketplace.visualstudio.com/items?itemName=vadimcn.vscode-lldb)
+  (declared as an extension dependency). A `quilon` debug type builds the active
+  `.ql` with `quilon build --debug` and launches the native binary under
+  CodeLLDB, so breakpoints set in the `.ql` source and single-stepping resolve
+  against the source through the compiler's DWARF line table.
+- **▶ Debug CodeLens** above every `^` entry point, next to **▶ Run**, plus a
+  **Quilon: Debug Current File** command and a contributed default `launch.json`
+  configuration.
+- **lldb value formatters (scaffold)** in `formatters/quilon.py`, imported into
+  the debug session. Rich rendering of Quilon values (Text, arrays, records, sum
+  variants) is pending distinct DWARF types from the compiler's debug-types
+  work; the formatter's type bindings activate once those types land.
+
 ## [0.9.1] - 2026-08-10
 
 Initial release. Version matches the Quilon compiler it targets.
