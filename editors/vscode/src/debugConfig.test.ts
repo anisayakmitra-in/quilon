@@ -7,10 +7,36 @@ import { test } from "node:test";
 import {
   buildArgs,
   firstNonEmptyLine,
+  InFlightBuilds,
   splitCommand,
   tempBinaryPath,
   toLldbConfiguration,
 } from "./debugConfig";
+
+test("InFlightBuilds: first acquire wins, a concurrent one for the same key is refused", () => {
+  const inFlight = new InFlightBuilds();
+  assert.equal(inFlight.tryAcquire("/w/a.ql"), true);
+  assert.equal(inFlight.tryAcquire("/w/a.ql"), false);
+});
+
+test("InFlightBuilds: a different key is independent", () => {
+  const inFlight = new InFlightBuilds();
+  assert.equal(inFlight.tryAcquire("/w/a.ql"), true);
+  assert.equal(inFlight.tryAcquire("/w/b.ql"), true);
+});
+
+test("InFlightBuilds: release lets the key be acquired again (success/error path)", () => {
+  const inFlight = new InFlightBuilds();
+  inFlight.tryAcquire("/w/a.ql");
+  inFlight.release("/w/a.ql");
+  assert.equal(inFlight.tryAcquire("/w/a.ql"), true);
+});
+
+test("InFlightBuilds: release is idempotent and safe when nothing is held", () => {
+  const inFlight = new InFlightBuilds();
+  inFlight.release("/w/a.ql");
+  assert.equal(inFlight.tryAcquire("/w/a.ql"), true);
+});
 
 test("firstNonEmptyLine: skips leading blank lines and trims", () => {
   assert.equal(firstNonEmptyLine("\n\n   error: boom  \nmore"), "error: boom");
@@ -77,6 +103,11 @@ test("toLldbConfiguration: resolves to a CodeLLDB launch of the built binary", (
   assert.deepEqual(config.args, ["a", "b"]);
   assert.equal(config.cwd, "/w");
   assert.equal(config.initCommands, undefined);
+});
+
+test("toLldbConfiguration: routes I/O to the shared Debug Console (no per-run terminal)", () => {
+  const config = toLldbConfiguration({ name: "n", program: "/tmp/app" });
+  assert.equal(config.terminal, "console");
 });
 
 test("toLldbConfiguration: imports the formatter when a path is given", () => {

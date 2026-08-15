@@ -189,12 +189,14 @@ you set in the source and single-stepping both work. Start a session with the
 }
 ```
 
-**Value inspection.** Breakpoints, stepping, and backtraces work today. Rich
-rendering of Quilon values (Text as a string, arrays as lists, records as field
-maps, sum types as their variant) needs the compiler to emit distinct DWARF
-types for those shapes — that work is not yet merged. The lldb formatter the
-session loads (`formatters/quilon.py`) is scaffolded for it and its type
-bindings light up once those types land; until then lldb uses its defaults.
+**Value inspection.** The lldb formatter the session loads
+(`formatters/quilon.py`) renders Quilon values against the distinct DWARF types
+the compiler emits: a `Text` shows as its string (not a `{data, byte_len}`
+struct), and a `[]T` expands to an indexed list of its elements, each keeping its
+own type — so a `[][]Text` expands to a list of inner `[]Text` arrays, each of
+its own `Text` values. Long arrays cap the default expansion and note the
+remaining count in the summary (an explicit `arr[i]` past the cap still works).
+Records and sum types currently fall back to lldb's default struct rendering.
 
 ## Publishing
 

@@ -7,18 +7,19 @@
 // CodeLLDB (`type: "lldb"`) launch of that binary. Breakpoints set in the `.ql`
 // source are hit through the DWARF line table the `--debug` build emits.
 //
-// Richer *value* rendering (Text as a string, arrays as lists, records/sum
-// variants) needs the distinct DWARF types the compiler's debug-types work will
-// emit; that is not merged yet. The formatter file we import is scaffolded for
-// it — see `formatters/quilon.py`.
+// Value rendering (Text as a string, `[]T` as an indexed list) is provided by
+// the lldb formatter we import against the compiler's DWARF types — see
+// `formatters/quilon.py`.
 
 import { execFile } from "node:child_process";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import {
   buildArgs,
   firstNonEmptyLine,
+  InFlightBuilds,
   splitCommand,
   tempBinaryPath,
   toLldbConfiguration,
@@ -56,6 +57,27 @@ function resolveSourceFile(config: vscode.DebugConfiguration): string | undefine
   return undefined;
 }
 
+/**
+ * Flush a dirty buffer for `file` so the build sees the latest text. Reports its
+ * own error (a save failure is not a build failure) and returns whether the file
+ * is on disk and ready to build.
+ */
+async function saveIfDirty(file: string): Promise<boolean> {
+  const open = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === file);
+  if (!open?.isDirty) {
+    return true;
+  }
+  try {
+    await open.save();
+    return true;
+  } catch (error) {
+    void vscode.window.showErrorMessage(
+      `Quilon: could not save ${path.basename(file)}: ${(error as Error).message}`,
+    );
+    return false;
+  }
+}
+
 /** Build `file` into `output` with DWARF line info; reject with the compiler's message on failure. */
 function buildDebugBinary(file: string, output: string, cwd: string | undefined): Promise<void> {
   const { exe, baseArgs } = splitCommand(quilonCommand());
@@ -84,6 +106,8 @@ function buildDebugBinary(file: string, output: string, cwd: string | undefined)
  * VS Code to run. Returning `undefined` aborts the session (after surfacing why).
  */
 class QuilonDebugConfigurationProvider implements vscode.DebugConfigurationProvider {
+  private readonly inFlight = new InFlightBuilds();
+
   constructor(private readonly context: vscode.ExtensionContext) {}
 
   provideDebugConfigurations(): vscode.DebugConfiguration[] {
@@ -109,39 +133,58 @@ class QuilonDebugConfigurationProvider implements vscode.DebugConfigurationProvi
     }
 
     const file = resolveSourceFile(config);
-    if (!file || !file.endsWith(".ql")) {
+    if (!file || !/\.ql$/i.test(file)) {
       void vscode.window.showErrorMessage("Quilon: no active .ql file to debug.");
       return undefined;
     }
+    const base = path.basename(file);
 
-    // The compiler reads from disk, so flush any dirty buffer for this file so
-    // breakpoints line up with the built binary.
-    const open = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === file);
-    if (open?.isDirty) {
-      await open.save();
-    }
-
-    const cwd =
-      folder?.uri.fsPath ?? vscode.workspace.getWorkspaceFolder(vscode.Uri.file(file))?.uri.fsPath;
-    const output = tempBinaryPath(file);
-
-    try {
-      await buildDebugBinary(file, output, cwd);
-    } catch (error) {
-      void vscode.window.showErrorMessage(
-        `Quilon: debug build failed: ${(error as Error).message}`,
+    // Refuse a second ▶ Debug for the same file while the first is still
+    // starting, so an impatient re-click can't kick off a duplicate build.
+    if (!this.inFlight.tryAcquire(file)) {
+      void vscode.window.showInformationMessage(
+        `Quilon: a debug build is already running for ${base}…`,
       );
       return undefined;
     }
 
-    const programArgs = Array.isArray(config.args) ? (config.args as string[]) : [];
-    return toLldbConfiguration({
-      name: typeof config.name === "string" ? config.name : "Quilon Debug",
-      program: output,
-      args: programArgs,
-      cwd,
-      formatterPath: formatterPath(this.context),
-    }) as vscode.DebugConfiguration;
+    try {
+      if (!(await saveIfDirty(file))) {
+        return undefined;
+      }
+
+      const cwd =
+        folder?.uri.fsPath ??
+        vscode.workspace.getWorkspaceFolder(vscode.Uri.file(file))?.uri.fsPath;
+      const output = tempBinaryPath(file);
+
+      try {
+        await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: `Quilon: building ${base} for debug…`,
+            cancellable: false,
+          },
+          () => buildDebugBinary(file, output, cwd),
+        );
+      } catch (error) {
+        void vscode.window.showErrorMessage(
+          `Quilon: debug build failed: ${(error as Error).message}`,
+        );
+        return undefined;
+      }
+
+      const programArgs = Array.isArray(config.args) ? (config.args as string[]) : [];
+      return toLldbConfiguration({
+        name: typeof config.name === "string" ? config.name : "Quilon Debug",
+        program: output,
+        args: programArgs,
+        cwd,
+        formatterPath: formatterPath(this.context),
+      }) as vscode.DebugConfiguration;
+    } finally {
+      this.inFlight.release(file);
+    }
   }
 }
 
@@ -156,6 +199,15 @@ function defaultDebugConfiguration(): vscode.DebugConfiguration {
   };
 }
 
+/** Whether `program` is one of the temp debug binaries we built, so it's safe to delete. */
+function isOurTempBinary(program: unknown): program is string {
+  return (
+    typeof program === "string" &&
+    path.dirname(program) === os.tmpdir() &&
+    path.basename(program).startsWith("quilon-debug-")
+  );
+}
+
 /** Register the debug provider and the `quilon.debug` command (used by the CodeLens). */
 export function registerDebug(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
@@ -163,6 +215,13 @@ export function registerDebug(context: vscode.ExtensionContext): void {
       "quilon",
       new QuilonDebugConfigurationProvider(context),
     ),
+    // Delete the temp binary once its session ends, so builds don't pile up.
+    vscode.debug.onDidTerminateDebugSession((session) => {
+      const program = session.configuration.program;
+      if (isOurTempBinary(program)) {
+        fs.rm(program, { force: true }, () => {});
+      }
+    }),
     vscode.commands.registerCommand("quilon.debug", () => {
       // `${file}` resolves to the active editor; the provider owns validation
       // and the "no active .ql file" error, so this stays a thin trigger.
