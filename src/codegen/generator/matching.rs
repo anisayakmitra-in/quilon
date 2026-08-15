@@ -224,12 +224,27 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if let BasicValueEnum::StructValue(struct_val) = value {
                     let concrete = self.scrutinee_payload_types(scrutinee, name);
                     let declared = self.variant_payloads.get(name).cloned();
+                    // Result stores every payload in one canonical `{ptr,i64}` slot; a bound
+                    // payload must be UNPACKED back to its concrete type (from the oracle).
+                    let is_result = self
+                        .sum_variants
+                        .get(name.as_str())
+                        .is_some_and(|(_, tn)| tn == "Result");
                     for (i, arg) in args.iter().enumerate() {
                         if let Pattern::Ident { name: arg_name, .. } = arg {
-                            let payload = self
+                            let payload_ty = [&concrete, &declared]
+                                .into_iter()
+                                .filter_map(|src| src.as_ref()?.get(i))
+                                .find(|t| !matches!(t, Type::Generic { .. }));
+                            let raw = self
                                 .builder
                                 .build_extract_value(struct_val, (i + 1) as u32, "payload")
                                 .map_err(ctx("Failed to extract payload"))?;
+                            let payload = if is_result {
+                                self.unpack_result_payload(raw, payload_ty)?
+                            } else {
+                                raw
+                            };
                             let alloca =
                                 self.create_entry_block_alloca(arg_name, payload.get_type())?;
                             self.builder
@@ -237,10 +252,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 .map_err(ctx("Failed to store constructor arg"))?;
                             self.variables
                                 .insert(arg_name.clone(), (alloca, payload.get_type()));
-                            let payload_ty = [&concrete, &declared]
-                                .into_iter()
-                                .filter_map(|src| src.as_ref()?.get(i))
-                                .find(|t| !matches!(t, Type::Generic { .. }));
                             if let Some(ty) = payload_ty {
                                 self.var_types.insert(arg_name.clone(), ty.clone());
                             }

@@ -25,8 +25,10 @@ fn test_ok_constructor_codegen() {
     assert!(result.is_ok(), "Codegen failed: {:?}", result.err());
 
     let ir = result.unwrap();
-    // Verify the IR contains the expected struct with tag 0
-    assert!(ir.contains("{ i8 0, double 4.200000e+01 }") || ir.contains("{ i8 0, double 42"));
+    // Result has one canonical `{ i8 tag, {ptr,i64} slot }` layout; a Num payload is PACKED
+    // into the slot (its f64 bits in the i64 field, ptr field null), tagged Ok (0).
+    assert!(ir.contains("{ i8, { ptr, i64 } }"));
+    assert!(ir.contains("{ i8 0, { ptr, i64 } { ptr null, i64 "));
 }
 
 #[test]
@@ -50,8 +52,9 @@ fn test_notok_constructor_codegen() {
     assert!(result.is_ok(), "Codegen failed: {:?}", result.err());
 
     let ir = result.unwrap();
-    // Verify the IR contains the expected struct with tag 1
-    assert!(ir.contains("{ i8 1, double 4.040000e+02 }") || ir.contains("{ i8 1, double 404"));
+    // Same canonical layout, tagged NotOk (1): the Num payload's bits packed into the slot.
+    assert!(ir.contains("{ i8, { ptr, i64 } }"));
+    assert!(ir.contains("{ i8 1, { ptr, i64 } { ptr null, i64 "));
 }
 
 #[test]
@@ -82,8 +85,8 @@ fn test_both_constructors_codegen() {
 
 #[test]
 fn test_function_returning_result() {
-    // A function may declare `-> Result` and return a constructor; codegen uses
-    // the canonical { i8, double } Result representation for the return slot.
+    // A function may declare `-> Result` and return a constructor; codegen uses the single
+    // canonical `{ i8, {ptr,i64} }` Result representation for the return slot.
     let source = r#"
         make_ok = () -> Result => Ok(42)
         ^ = () -> Num => <
@@ -107,9 +110,10 @@ fn test_function_returning_result() {
     assert!(result.is_ok(), "Codegen failed: {:?}", result.err());
 
     let ir = result.unwrap();
-    // The constructed Ok(42) payload is present as a double, tag 0.
-    assert!(ir.contains("i8 0"));
-    assert!(ir.contains("double 4.200000e+01") || ir.contains("double 42"));
+    // The constructed Ok(42) is the canonical Result struct, tagged 0, with the Num payload
+    // packed into the `{ptr,i64}` slot — the same shape a `-> Result` return lowers to.
+    assert!(ir.contains("{ i8, { ptr, i64 } }"));
+    assert!(ir.contains("{ i8 0, { ptr, i64 } { ptr null, i64 "));
 }
 
 #[test]

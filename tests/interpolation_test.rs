@@ -203,6 +203,20 @@ fn renders_sum_variant_name() {
 }
 
 #[test]
+fn renders_result_variant_name() {
+    // The built-in `Result` now has one canonical `{ i8 tag, {ptr,i64} }` layout; rendering
+    // reads only the tag, so a composite-payload Result still renders as its variant name.
+    assert_exit(
+        "^ = () -> Num => <\n  r :: Result = Ok(\"hi\")\n  \"`r`\" == \"Ok\" ? 1 : 0\n>",
+        1,
+    );
+    assert_exit(
+        "^ = () -> Num => <\n  r :: Result = NotOk([\"a\", \"b\"])\n  \"`r`\" == \"NotOk\" ? 1 : 0\n>",
+        1,
+    );
+}
+
+#[test]
 fn renders_array_full_and_truncated() {
     // <= 10 elements: full. > 10: `[first <- last]`.
     assert_exit(

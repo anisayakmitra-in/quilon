@@ -230,8 +230,8 @@ impl<'ctx> CodeGenerator<'ctx> {
             .builder
             .build_signed_int_to_float(idx, self.context.f64_type(), "idx_as_num")
             .map_err(ctx("Failed to convert index to num"))?;
-        let ok = self.build_result(elem_llvm, "Ok", idx_f.into());
-        let no = self.build_result(elem_llvm, "NotOk", zeroed(elem_llvm));
+        let ok = self.build_result(elem_llvm, "Ok", idx_f.into())?;
+        let no = self.build_result(elem_llvm, "NotOk", zeroed(elem_llvm))?;
         self.builder
             .build_select(found, ok, no, "idx_value")
             .map_err(ctx("Failed to select indexOf result"))

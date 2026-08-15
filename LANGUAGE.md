@@ -346,6 +346,14 @@ fallback). This holds across a function boundary too: a function returning `Ok("
 `getEnv`/`getOpt` shape — carries **both** arms' payloads. (See `examples/result.ql` and
 `examples/result_payload.ql`.)
 
+Every `Result` shares **one uniform layout** regardless of its payload, so a `Result`
+carrying *any* payload — `Num`, `Text`, `[]Text`, a composite — passes through a generic
+`(r :: Result)` parameter or return. This is what lets `assertOk` / `assertNotOk`
+([`core.test`](#coretest--assertions)) accept a `Result` of any shape, including the
+composite-payload results of `getEnv` / `getOpt` (see `examples/cli.ql`). Extracting a
+payload still needs its concrete type in scope at the match site (there are no generics),
+but *matching by variant* (`Ok` vs `NotOk`) works on any `Result` anywhere.
+
 A constructor pattern's argument must be **irrefutable** — a binding (`Ok(x)`) or the
 wildcard (`Ok(_)`). A literal or nested constructor there (`Ok(1)`, `Ok(Ok(x))`) is a
 compile error: match dispatch tests the constructor tag only, so such a pattern would
@@ -1002,6 +1010,7 @@ pathological input.
 | `Result` as a normal predefined sum type (`Ok`/`NotOk`) | ✅ |
 | Sum-type payloads: `Num` / `Bool` / `Text` | ✅ |
 | Concrete `Result` payloads: a bound `Ok`/`NotOk` payload is usable at its real type (overload dispatch, across `-> Result` fn boundaries) | ✅ |
+| Uniform `Result` layout: a `Result` of ANY payload (`Num`/`Text`/`[]Text`/composite) passes through a generic `(r :: Result)` param/return — powers `assertOk`/`assertNotOk` on `getEnv`/`getOpt` | ✅ |
 | Modules: `<< core.io`, `<< core.test`, `<< core.cli`, file-path imports, `>>` exports | ✅ |
 | I/O: `print` / `eprint` / `write` | ✅ |
 | Assertions: `<< core.test` (`assert` (+ `AssertOpts` message) / `assertEq` / `assertNotEq` / `assertOk` / `assertNotOk`; fail → exit 101) | ✅ |

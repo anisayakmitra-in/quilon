@@ -271,6 +271,16 @@ impl<'ctx> DebugInfo<'ctx> {
         self.struct_type("Text", &[("data", data), ("byte_len", byte_len)])
     }
 
+    /// The canonical `{ ptr, i64 }` payload slot of a `Result` — 16 bytes wide, holding any
+    /// packed payload (a Text/array fills it directly; a scalar rides in one field). Layout-
+    /// faithful so the tag and slot land at the same offsets/size as the LLVM value.
+    pub fn ptr_len_slot(&self) -> DIType<'ctx> {
+        let byte = self.basic_type("char", 8, DW_ATE_SIGNED_CHAR);
+        let data = self.pointer_to("", byte);
+        let bits = self.basic_type("i64", 64, DW_ATE_SIGNED);
+        self.struct_type("payload", &[("ptr", data), ("bits", bits)])
+    }
+
     /// `[]T` — a `{ ptr data, i64 size }` struct whose `data` points at `elem`-typed
     /// elements. `name` carries the element type (e.g. `"[]Num"`), and the pointee is the
     /// element's own DWARF type, so it is distinct from both `Text` and a different `[]U`.
@@ -298,10 +308,10 @@ impl<'ctx> DebugInfo<'ctx> {
     /// This tagged-struct is layout-faithful — the tag and every payload slot land at the same
     /// offsets and total size as the LLVM value — and carries both the tag byte and a distinct
     /// type identity, enough for a debugger to locate the discriminant and for a pretty-printer
-    /// to dispatch. The one place a slot's *encoding* (not its offset/size) is approximate is
-    /// the built-in `Result`, whose payload is sized per construction and can be either a
-    /// `double` or a pointer (both 8 bytes): the slot is typed `Num`, so a pointer payload reads
-    /// back as a float until a `Result`-aware formatter reinterprets it.
+    /// to dispatch. The built-in `Result` has ONE canonical `{ptr,i64}` payload slot (16 bytes)
+    /// into which any payload is packed (see `ptr_len_slot`): a Text/array fills it directly, a
+    /// scalar rides in one field, so a slot's *encoding* (not its offset/size) is approximate
+    /// there until a `Result`-aware formatter reinterprets it by the payload's static type.
     ///
     /// It is deliberately NOT a DWARF variant part (`DW_TAG_variant_part` / `DW_TAG_variant`):
     /// that self-describing form — where each variant names its own fields (`Circle(r)`,
