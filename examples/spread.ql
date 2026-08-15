@@ -1,12 +1,16 @@
 ~ Spread `<-` (prefix): splice a source's elements/fields into a literal.
 ~   Array : `[<-xs, 4, 5]` -> every element of `xs`, then 4, 5 (multiple spreads OK).
 ~   Record: `{<-p, x = 9}` -> a copy of `p` with `x` overridden (a functional update).
+~           `Vec {<-p, x = 9}` -> the same, naming the type being built.
 ~ Prefix `<-` (first token of an element/field) is SPREAD; infix `lo <- hi` is a range.
 ~ So `[1 <- 4]` is a ONE-element array holding the range [1,2,3,4], while `[<-xs, 4]`
 ~ splices xs. Inside a spread the source is a full expression.
 ~ `<< core.test` verifies every result; on success the program exits 0.
 << core.io
 << core.test
+
+~ A method-free named type: an anonymous record of its exact shape can fill it.
+Pair = { x :: Num, y :: Num }
 
 ~ A named record type — its type identity and methods survive a functional update.
 Vec = {
@@ -39,6 +43,18 @@ Vec = {
   a :: Vec = Vec { x = 10, y = 20 }
   b :: Vec = { <-a, x = 5 }            ~ keeps Vec: b.sum() available
   assertEq(b.sum(), 25)                ~ 5 + 20
+
+  ~ --- Functional update naming the type: `Vec { <-a, ... }` ---
+  ~ The source must already be that type, or an anonymous record of exactly its shape
+  ~ (which a type with methods, like Vec, never has).
+  c :: Vec = Vec { <-a, y = 2 }        ~ named source: keeps Vec, so c.sum() works
+  assertEq(c.sum(), 12)                ~ 10 + 2
+
+  parts = { x = 3, y = 4 }             ~ an anonymous record of exactly Pair's shape
+  pair :: Pair = Pair { <-parts }      ~ Pair declares no methods, so the shape fills it
+  assertEq(pair.x + pair.y, 7)
+  overridden :: Pair = Pair { <-parts, y = 40 }
+  assertEq(overridden.y, 40)
 
   ~ --- Record functional update (anonymous, override + add a field) ---
   p = { name = "Ada", tag = 1 }

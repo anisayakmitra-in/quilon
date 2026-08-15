@@ -38,7 +38,7 @@ Quilon's identity, and the rules that guide its design:
 | `>>` | Export an item from a module | `>> add = (a, b) => a + b` |
 | `\|>` | Pipe (first-arg injection) | `x \|> f(a)` ≡ `f(x, a)` |
 | `<-` (infix) | Inclusive range → `[]Num` | `1 <- 4` ≡ `[1,2,3,4]` · `4 <- 1` ≡ `[4,3,2,1]` |
-| `<-` (prefix) | Spread inside a `[ ]` / `{ }` literal ([rule](#spread-in-literals)) | `[<-xs, 4]` · `{<-p, x = 9}` |
+| `<-` (prefix) | Spread inside a `[ ]` / `{ }` literal ([rule](#spread-in-literals)) | `[<-xs, 4]` · `{<-p, x = 9}` · `Vec {<-p, x = 9}` |
 | `?` `\|` `_` | Pattern match | `v ? \| 0 => "zero" \| _ => "other"` |
 | `/` | Division **or** sum-type variant separator | `a / b` · `Color = Red / Green` |
 | `` ` `` (in a string) | [Interpolation](#string-interpolation-and-the-render-operator) hole · `` `` `` = one literal backtick | `` "hi `user.name`" `` |
@@ -709,6 +709,13 @@ The **prefix** `<-` splices a source's contents into an array or record literal:
   result reproduces that type's fields exactly (only overriding existing fields, adding
   nothing), the result keeps the **named type and its methods**; otherwise it is an
   anonymous record.
+- **Naming the type you are building** — `Vec {<-p, x = 9}` — is the same update, written
+  as a constructor. Because the target type is stated, the spread source must be able to
+  fill it: either **already that type**, or an **anonymous record of exactly its shape**
+  (same field names and types, nothing extra). A *different* named type is never
+  accepted, however similar its fields — `Point` and `Other` stay distinct types — and an
+  anonymous record cannot fill a type that declares **methods**, since it carries none.
+  Every declared field must end up provided, by the spread or by an override.
 
 ```quilon
 xs = [1, 2, 3]
@@ -718,6 +725,7 @@ zs = [0, <-xs, <-ys]     ~ [0, 1,2,3, 1,2,3,4,5]
 Vec = { x :: Num, y :: Num, sum = => it.x + it.y }
 a = Vec { x = 10, y = 20 }
 b = { <-a, x = 5 }       ~ still a Vec: b.sum() → 25
+c = Vec { <-a, x = 5 }   ~ the same update, naming the type being built
 ```
 
 **Range vs. spread — the disambiguation rule.** `<-` is now BOTH the infix inclusive

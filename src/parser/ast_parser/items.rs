@@ -1,0 +1,478 @@
+//! Declarations and the program itself: imports, top-level items, functions, named
+//! record and sum types, and `< >` blocks.
+//!
+//! Part of the recursive-descent parser; see `super` for the `Parser` cursor these
+//! methods run against.
+
+use super::*;
+
+impl<'a> Parser<'a> {
+    pub fn parse(tokens: &'a [Token]) -> Result<Program, ParseError> {
+        let mut parser = Self::new(tokens);
+        parser.parse_program()
+    }
+
+    pub(super) fn parse_program(&mut self) -> Result<Program, ParseError> {
+        let mut imports = Vec::new();
+        let mut items = Vec::new();
+
+        while !self.is_at_end() {
+            if self.check(&TokenKind::Import) {
+                imports.push(self.parse_import()?);
+            } else {
+                items.push(self.parse_item()?);
+            }
+        }
+
+        Ok(Program { imports, items })
+    }
+
+    /// Parse an import line: `<< core.io` (built-in dotted name) or `<< "path/to/mod.ql"` (file path).
+    pub(super) fn parse_import(&mut self) -> Result<Import, ParseError> {
+        let start = self.current_span();
+        self.expect(&TokenKind::Import)?;
+
+        let path = if let TokenKind::String(chunks) = self.peek().kind.clone() {
+            // File-path import: << "some/path.ql". A path is a plain literal — an
+            // interpolation hole here is meaningless, so reject it clearly.
+            let span = self.peek().span.clone();
+            self.advance();
+            match chunks.as_slice() {
+                [StrChunk::Lit(s)] => ModulePath::FilePath(s.clone()),
+                _ => {
+                    return Err(ParseError {
+                        message: "import path cannot contain interpolation".to_string(),
+                        span,
+                    });
+                }
+            }
+        } else {
+            // Built-in dotted import: << core.io
+            let mut parts = vec![self.expect_ident()?];
+            while self.check(&TokenKind::Dot) {
+                self.advance();
+                parts.push(self.expect_ident()?);
+            }
+            ModulePath::BuiltinDotted(parts)
+        };
+
+        let end = self.previous_span();
+        Ok(Import {
+            path,
+            span: self.span(start.start, end.end),
+        })
+    }
+
+    pub(super) fn parse_item(&mut self) -> Result<Item, ParseError> {
+        // Three possibilities:
+        // 1. Type declaration: Name = { fields and methods }
+        // 2. Function declaration: name = params => body
+        // 3. Variable declaration: name = value
+
+        let start = self.current_span();
+
+        // Optional `>>` export prefix: marks this top-level item as exported from its module.
+        let exported = if self.check(&TokenKind::Export) {
+            self.advance();
+            true
+        } else {
+            false
+        };
+
+        // A top-level definition may be named by an operator symbol — this is how a
+        // user declares an operator overload, e.g. `+ = (a :: Point, b :: Point) ...`.
+        // An operator name is always a function definition (operators take operands).
+        if let Some(op_name) = self.operator_def_name() {
+            self.advance();
+            self.expect(&TokenKind::Assign)?;
+            return self.parse_function_decl(op_name, start, None, exported);
+        }
+
+        let name = self.expect_ident()?;
+
+        // Check for type annotation
+        let type_annotation = if self.check(&TokenKind::TypeAnnotation) {
+            self.advance();
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+
+        // Binding operator: `=` (immutable bind) or `:=` (mutable bind / reassign).
+        let mutable = if self.check(&TokenKind::MutAssign) {
+            self.advance();
+            true
+        } else {
+            self.expect(&TokenKind::Assign)?;
+            false
+        };
+
+        // A `:=` binding is always a mutable value binding (or a reassignment of one);
+        // it is never a type or function declaration.
+        if mutable {
+            let value = self.parse_expr()?;
+            let end = self.previous_span();
+            return Ok(Item::VarDecl(VarDecl {
+                mutable: true,
+                name,
+                type_annotation,
+                value,
+                exported,
+                span: self.span(start.start, end.end),
+            }));
+        }
+
+        // Check if it's a type declaration (Name = { ... })
+        // Type declarations can't be mutable and don't have type annotations
+        // AND they must have field declarations (name :: Type) or methods (name = => ...)
+        if type_annotation.is_none() && self.check(&TokenKind::BraceOpen) {
+            // Lookahead to check if this is a type decl or record literal
+            // Type decl has: { name :: Type ... } or { name = => ... }
+            // Record literal has: { name = value ... }
+
+            let mut idx = 1; // After {
+            let mut is_type_decl = false;
+
+            // Skip to first field
+            while idx < 10 {
+                let tok = self.peek_ahead(idx);
+                if tok.kind == TokenKind::Ident {
+                    // Check what follows the identifier
+                    let next = self.peek_ahead(idx + 1);
+                    if next.kind == TokenKind::TypeAnnotation {
+                        // name :: Type - this is a field declaration
+                        is_type_decl = true;
+                    } else if next.kind == TokenKind::Assign {
+                        // name = ... - check if it's a method (name = => ...)
+                        let after_assign = self.peek_ahead(idx + 2);
+                        if after_assign.kind == TokenKind::Arrow {
+                            // name = => ... - this is a method
+                            is_type_decl = true;
+                        }
+                        // else: name = value - this is a record literal
+                    }
+                    break;
+                }
+                if tok.kind == TokenKind::BraceClose || tok.kind == TokenKind::Eof {
+                    break;
+                }
+                idx += 1;
+            }
+
+            if is_type_decl {
+                return self.parse_type_decl(name, start, exported);
+            }
+        }
+
+        // Check if it's a sum-type declaration: `Name = VariantA / VariantB(Num) / ...`.
+        // Disambiguation (LOCKED): `/` is a sum-type separator (not division) only when
+        // the declared name and every operand are Capitalized type/constructor names. We
+        // require the type name to be Capitalized and the RHS to be a `/`-separated list
+        // of Capitalized constructors (each optionally taking a parenthesized payload list).
+        // A single bare `Red` (no `/`) is a normal value binding, not a one-variant sum.
+        if type_annotation.is_none() && is_capitalized(&name) && self.looks_like_sum_decl() {
+            return self.parse_sum_type_decl(name, start, exported);
+        }
+
+        // Check if it's a function:
+        // - name = => ...  (no params)
+        // - name = (params) => ...
+        // - name = param => ...  (single param, no parens)
+        // Need to be careful not to confuse with: result = (2 + 3) * 4
+
+        let is_function = if self.check(&TokenKind::Arrow) {
+            true
+        } else if self.check(&TokenKind::ParenOpen) {
+            // Look ahead to see if this is parameter list or expression
+            // Parameter list ends with ) =>
+            // We need to scan ahead to find matching )
+            let mut depth = 1;
+            let mut idx = 1;
+            let mut found_arrow = false;
+
+            while idx < 50 && depth > 0 {
+                // reasonable limit for lookahead
+                let ahead = self.peek_ahead(idx);
+                match ahead.kind {
+                    TokenKind::ParenOpen => depth += 1,
+                    TokenKind::ParenClose => {
+                        depth -= 1;
+                        if depth == 0 {
+                            // Check if next token after ) is => or ->
+                            let next = self.peek_ahead(idx + 1);
+                            found_arrow = next.kind == TokenKind::Arrow
+                                || next.kind == TokenKind::ReturnArrow;
+                        }
+                    }
+                    TokenKind::Eof => break,
+                    _ => {}
+                }
+                idx += 1;
+            }
+            found_arrow
+        } else if self.check(&TokenKind::Ident) {
+            // Single param without parens: followed by `=>` (body), `::` (param type),
+            // or `->` (return type, e.g. `print = x -> $ => $`).
+            let ahead = self.peek_ahead(1);
+            ahead.kind == TokenKind::Arrow
+                || ahead.kind == TokenKind::TypeAnnotation
+                || ahead.kind == TokenKind::ReturnArrow
+        } else {
+            false
+        };
+
+        if is_function {
+            self.parse_function_decl(name, start, type_annotation, exported)
+        } else {
+            let value = self.parse_expr()?;
+            let end = self.previous_span();
+
+            Ok(Item::VarDecl(VarDecl {
+                mutable,
+                name,
+                type_annotation,
+                value,
+                exported,
+                span: self.span(start.start, end.end),
+            }))
+        }
+    }
+
+    pub(super) fn parse_function_decl(
+        &mut self,
+        name: String,
+        start: Span,
+        return_type: Option<crate::ast::Type>,
+        exported: bool,
+    ) -> Result<Item, ParseError> {
+        // Parse parameters: (a, b) or (a :: Type, b :: Type) or single param or just =>
+        let params = self.parse_param_list()?;
+
+        // Optional return type annotation with ->
+        let return_type = if self.check(&TokenKind::ReturnArrow) {
+            self.advance();
+            Some(self.parse_type()?)
+        } else {
+            return_type
+        };
+
+        // Expect =>
+        self.expect(&TokenKind::Arrow)?;
+
+        // Parse body (can be a block or single expression)
+        let body = if self.check(&TokenKind::BlockOpen) {
+            self.parse_block()?
+        } else {
+            self.parse_expr()?
+        };
+
+        let end = self.previous_span();
+
+        Ok(Item::FunctionDecl(FunctionDecl {
+            name,
+            params,
+            return_type,
+            body,
+            exported,
+            span: self.span(start.start, end.end),
+        }))
+    }
+
+    pub(super) fn parse_type_decl(
+        &mut self,
+        name: String,
+        start: Span,
+        exported: bool,
+    ) -> Result<Item, ParseError> {
+        // Parse type definition: Name = { field :: Type, ... method = => body, ... }
+        self.expect(&TokenKind::BraceOpen)?;
+
+        let mut fields = Vec::new();
+        let mut methods = Vec::new();
+
+        while !self.check(&TokenKind::BraceClose) && !self.is_at_end() {
+            // A method may be named `` ` `` (the render operator override); every other
+            // member name is an ordinary identifier.
+            let field_name = if self.check(&TokenKind::Backtick) {
+                self.advance();
+                "`".to_string()
+            } else {
+                self.expect_ident()?
+            };
+
+            if self.check(&TokenKind::TypeAnnotation) {
+                // This is a field: name :: Type
+                self.advance();
+                let field_type = self.parse_type()?;
+                fields.push((field_name, field_type));
+            } else if self.check(&TokenKind::Assign) {
+                // This is a method: name = params => body
+                self.advance();
+
+                let method_start = self.current_span();
+                // Identical grammar to a function's parameters, so it is the same rule
+                // ("it" is implicit and never listed here).
+                let params = self.parse_param_list()?;
+
+                // Optional return type annotation
+                let return_type = if self.check(&TokenKind::ReturnArrow) {
+                    self.advance();
+                    Some(self.parse_type()?)
+                } else {
+                    None
+                };
+
+                // Expect =>
+                self.expect(&TokenKind::Arrow)?;
+
+                // Parse method body
+                let body = if self.check(&TokenKind::BlockOpen) {
+                    self.parse_block()?
+                } else {
+                    self.parse_expr()?
+                };
+
+                let method_end = self.previous_span();
+
+                methods.push(MethodDecl {
+                    name: field_name,
+                    params,
+                    return_type,
+                    body,
+                    span: self.span(method_start.start, method_end.end),
+                });
+            } else {
+                return Err(ParseError {
+                    message: "Expected :: or = after field/method name".to_string(),
+                    span: self.peek().span.clone(),
+                });
+            }
+
+            // Optional comma separator
+            if self.check(&TokenKind::Comma) {
+                self.advance();
+            }
+        }
+
+        self.expect(&TokenKind::BraceClose)?;
+        let end = self.previous_span();
+
+        Ok(Item::TypeDecl(TypeDecl {
+            name,
+            type_def: TypeDef::Record { fields, methods },
+            exported,
+            span: self.span(start.start, end.end),
+        }))
+    }
+
+    /// Parse a sum-type declaration: `Name = VariantA / VariantB(Num, Text) / ...`.
+    /// Each variant is a Capitalized constructor name with an optional parenthesized
+    /// list of payload types (built-in types only — enforced by the type checker).
+    pub(super) fn parse_sum_type_decl(
+        &mut self,
+        name: String,
+        start: Span,
+        exported: bool,
+    ) -> Result<Item, ParseError> {
+        use crate::ast::{SumVariant, TypeDef};
+
+        let mut variants = Vec::new();
+        loop {
+            let variant_name = self.expect_ident()?;
+            if !is_capitalized(&variant_name) {
+                return Err(ParseError {
+                    message: format!(
+                        "Sum-type variant '{}' must start with an uppercase letter",
+                        variant_name
+                    ),
+                    span: self.previous_span(),
+                });
+            }
+
+            // Optional payload-type list: `(Num)` or `(Num, Text)`.
+            let mut fields = Vec::new();
+            if self.check(&TokenKind::ParenOpen) {
+                self.advance();
+                if !self.check(&TokenKind::ParenClose) {
+                    loop {
+                        fields.push(self.parse_type()?);
+                        if !self.check(&TokenKind::Comma) {
+                            break;
+                        }
+                        self.advance();
+                    }
+                }
+                self.expect(&TokenKind::ParenClose)?;
+            }
+
+            variants.push(SumVariant {
+                name: variant_name,
+                fields,
+            });
+
+            // Variants are separated by `/`; stop when the next token isn't one.
+            if self.check(&TokenKind::Slash) {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+
+        let end = self.previous_span();
+        Ok(Item::TypeDecl(TypeDecl {
+            name,
+            type_def: TypeDef::Sum(variants),
+            exported,
+            span: self.span(start.start, end.end),
+        }))
+    }
+
+    /// Depth-guarded entry point for `< … >` blocks. A block may hold nested named
+    /// function declarations whose bodies are themselves blocks
+    /// (`f = () => < g = () => < … > >`); that recursion runs through
+    /// `parse_item`/`parse_function_decl` rather than `parse_expr`, so blocks get
+    /// the `MAX_NESTING_DEPTH` bound here too.
+    pub(super) fn parse_block(&mut self) -> Result<Expr, ParseError> {
+        self.nested(Self::parse_block_inner)
+    }
+
+    pub(super) fn parse_block_inner(&mut self) -> Result<Expr, ParseError> {
+        use crate::ast::Statement;
+
+        let start = self.current_span();
+        self.expect(&TokenKind::BlockOpen)?;
+
+        let mut stmts = Vec::new();
+
+        while !self.check(&TokenKind::BlockClose) && !self.is_at_end() {
+            // Try to parse as item first (for nested declarations / reassignments).
+            // `name = …` is an immutable binding; `name := …` is a mutable bind/reassign;
+            // `name :: Type = …` is an annotated binding. `::` at statement start is
+            // unambiguously a binding annotation (there is no expression-level `::`), so
+            // delegating to `parse_item` keeps block-level bindings identical to top-level.
+            if self.check(&TokenKind::Ident)
+                && matches!(
+                    self.peek_ahead(1).kind,
+                    TokenKind::Assign | TokenKind::MutAssign | TokenKind::TypeAnnotation
+                )
+            {
+                // This looks like a declaration. A nested `name = params => body` stays an
+                // `Item::FunctionDecl`; codegen decides per-decl whether it is a capturing
+                // CLOSURE or a plain (recursion-capable) local function, based on whether
+                // it actually references enclosing locals.
+                let item = self.parse_item()?;
+                stmts.push(Statement::Item(item));
+            } else {
+                stmts.push(Statement::Expr(self.parse_expr()?));
+            }
+
+            // Expressions in blocks can be separated by newlines (already skipped by lexer)
+            // or we just continue to the next one
+        }
+
+        self.expect(&TokenKind::BlockClose)?;
+        let span = self.span(start.start, self.previous_span().end);
+
+        Ok(Expr::Block { stmts, span })
+    }
+}

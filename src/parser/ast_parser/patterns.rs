@@ -1,0 +1,117 @@
+//! `?`/`|` matching: the arms and the patterns they test.
+//!
+//! Part of the recursive-descent parser; see `super` for the `Parser` cursor these
+//! methods run against.
+
+use super::*;
+
+impl<'a> Parser<'a> {
+    pub(super) fn parse_match(&mut self, expr: Expr) -> Result<Expr, ParseError> {
+        let start = expr.span().start;
+        let mut arms = Vec::new();
+
+        // Parse match arms: | pattern => body
+        while self.check(&TokenKind::Pipe) {
+            self.advance();
+
+            let pattern = self.parse_pattern()?;
+            self.expect(&TokenKind::Arrow)?;
+            let body = self.parse_expr()?;
+            let arm_span = self.span(pattern.span().start, body.span().end);
+
+            arms.push(crate::ast::MatchArm {
+                pattern,
+                body,
+                span: arm_span,
+            });
+        }
+
+        if arms.is_empty() {
+            return Err(ParseError {
+                message: "Match expression must have at least one arm".to_string(),
+                span: self.span(start, start),
+            });
+        }
+
+        let end = arms.last().unwrap().span.end;
+
+        Ok(Expr::Match {
+            expr: Box::new(expr),
+            arms,
+            span: self.span(start, end),
+        })
+    }
+
+    /// Depth-guarded entry point for pattern parsing. A constructor pattern's
+    /// arguments recurse back into `parse_pattern` (`Ok(Ok(…))`), independently of
+    /// the expression grammar, so nested patterns get the same `MAX_NESTING_DEPTH`
+    /// bound to keep deeply nested patterns from overflowing the stack.
+    pub(super) fn parse_pattern(&mut self) -> Result<crate::ast::Pattern, ParseError> {
+        self.nested(Self::parse_pattern_inner)
+    }
+
+    pub(super) fn parse_pattern_inner(&mut self) -> Result<crate::ast::Pattern, ParseError> {
+        use crate::ast::Pattern;
+
+        let token = self.peek();
+
+        match &token.kind {
+            TokenKind::Ident => {
+                let name = token.text.clone();
+                let span = token.span.clone();
+                self.advance();
+
+                // Check if it's a constructor: Name(patterns) or Name pattern
+                if self.check(&TokenKind::ParenOpen) {
+                    self.advance();
+                    let mut args = Vec::new();
+
+                    if !self.check(&TokenKind::ParenClose) {
+                        loop {
+                            args.push(self.parse_pattern()?);
+                            if !self.check(&TokenKind::Comma) {
+                                break;
+                            }
+                            self.advance();
+                        }
+                    }
+
+                    self.expect(&TokenKind::ParenClose)?;
+                    let end = self.previous_span().end;
+
+                    Ok(Pattern::Constructor {
+                        name,
+                        args,
+                        span: self.span(span.start, end),
+                    })
+                } else if is_capitalized(&name) {
+                    // A bare Capitalized name in pattern position is a nullary constructor
+                    // (e.g. `| Red =>`), not a binding. Lowercase names bind a value.
+                    Ok(Pattern::Constructor {
+                        name,
+                        args: vec![],
+                        span,
+                    })
+                } else {
+                    // Just an identifier pattern (binds the scrutinee value)
+                    Ok(Pattern::Ident { name, span })
+                }
+            }
+            TokenKind::Number(value) => {
+                let value = value.0;
+                let span = token.span.clone();
+                self.advance();
+                Ok(Pattern::Number { value, span })
+            }
+            TokenKind::Underscore => {
+                let span = token.span.clone();
+                self.advance();
+                Ok(Pattern::Wildcard { span })
+            }
+            _ => Err(ParseError {
+                message: format!("Expected pattern, got {:?}", token.kind),
+                span: token.span.clone(),
+            }),
+        }
+    }
+}

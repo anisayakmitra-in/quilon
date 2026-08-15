@@ -119,6 +119,13 @@ impl<'ctx> CodeGenerator<'ctx> {
             Expr::Constructor {
                 type_name, fields, ..
             } => {
+                // A `<-source` entry fills the fields it is not overriding, exactly as in
+                // an anonymous literal — and the update lowering already builds its result
+                // from the whole literal's oracle type, which here is this named type, so
+                // the slots land in declaration order with the type's methods intact.
+                if fields.iter().any(|(_, v)| matches!(v, Expr::Spread { .. })) {
+                    return self.generate_record_update(expr, fields);
+                }
                 // A named-type instance has the same struct representation as a record,
                 // but its field SLOTS follow the type's DECLARATION order — which is the
                 // order `record_types` and the type oracle use to index/GEP fields later.

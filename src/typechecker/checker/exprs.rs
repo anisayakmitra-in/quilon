@@ -301,6 +301,44 @@ impl TypeChecker {
                             let mut provided_fields = std::collections::HashSet::new();
 
                             for (field_name, field_expr) in fields {
+                                // A `<-source` entry fills every declared field at once.
+                                // The source must already BE this type, or be an
+                                // anonymous record of exactly its shape — a different
+                                // named type is not interchangeable with this one, and a
+                                // record cannot stand in for a type that has methods it
+                                // does not carry.
+                                if let Expr::Spread { expr: src, .. } = field_expr {
+                                    let src_type = self.infer_expr(src)?;
+                                    let fills = match &src_type {
+                                        Type::Named { name: src_name, .. } => src_name == &name,
+                                        Type::Record(src_fields) => {
+                                            methods.is_empty()
+                                                && src_fields.len() == type_fields.len()
+                                                && type_fields.iter().all(|(f, ty)| {
+                                                    src_fields.iter().any(|(sf, sty)| {
+                                                        sf == f && types_match(ty, sty)
+                                                    })
+                                                })
+                                        }
+                                        _ => false,
+                                    };
+                                    if !fills {
+                                        return Err(TypeError::TypeMismatch {
+                                            expected: Box::new(Type::Named {
+                                                name: name.clone(),
+                                                fields: type_fields.clone(),
+                                                methods: methods.clone(),
+                                            }),
+                                            got: Box::new(src_type),
+                                            span: span.clone(),
+                                        });
+                                    }
+                                    for (f, _) in &type_fields {
+                                        provided_fields.insert(f.clone());
+                                    }
+                                    continue;
+                                }
+
                                 provided_fields.insert(field_name.clone());
 
                                 // Find the expected type for this field

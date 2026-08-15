@@ -539,3 +539,45 @@ fn test_unannotated_comparison_operator_overload_asks_for_the_annotation() {
         check_ok("V = { x :: Num }\n== = (a :: V, b :: V) => a\n^ = () -> Num => 0").unwrap_err();
     assert!(matches!(err, TypeError::UnannotatedOverloadMember { .. }));
 }
+
+#[test]
+fn test_named_update_accepts_its_own_type_or_that_exact_shape() {
+    // The source is already the type being built.
+    assert!(
+        check_ok(
+            "P = { x :: Num, y :: Num }\n^ = () -> Num => <\n  a = P { x = 1, y = 2 }\n  b = P { <-a, x = 9 }\n  b.x\n>"
+        )
+        .is_ok()
+    );
+    // An anonymous record of exactly that shape fills a type with no methods.
+    assert!(
+        check_ok(
+            "P = { x :: Num, y :: Num }\n^ = () -> Num => <\n  parts = { x = 1, y = 2 }\n  b = P { <-parts }\n  b.x\n>"
+        )
+        .is_ok()
+    );
+}
+
+#[test]
+fn test_named_update_refuses_a_source_that_cannot_fill_the_type() {
+    // A different named type is not interchangeable, however alike its fields.
+    let other = check_ok(
+        "P = { x :: Num }\nQ = { x :: Num }\n^ = () -> Num => <\n  q = Q { x = 1 }\n  p = P { <-q }\n  p.x\n>",
+    )
+    .unwrap_err();
+    assert!(matches!(other, TypeError::TypeMismatch { .. }));
+
+    // An anonymous record carries no methods, so it cannot fill a type that has one.
+    let with_method = check_ok(
+        "V = { x :: Num, double = => it.x * 2 }\n^ = () -> Num => <\n  parts = { x = 1 }\n  v = V { <-parts }\n  v.x\n>",
+    )
+    .unwrap_err();
+    assert!(matches!(with_method, TypeError::TypeMismatch { .. }));
+
+    // A shape that is missing one of the declared fields cannot fill it either.
+    let short = check_ok(
+        "P = { x :: Num, y :: Num }\n^ = () -> Num => <\n  parts = { x = 1 }\n  p = P { <-parts }\n  p.x\n>",
+    )
+    .unwrap_err();
+    assert!(matches!(short, TypeError::TypeMismatch { .. }));
+}
