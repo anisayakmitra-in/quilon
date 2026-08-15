@@ -25,6 +25,12 @@ All notable changes to Quilon are documented here.
 
 ### Changed
 
+- **`if` and `while` are no longer reserved words.** The lexer still had tokens for
+  them, left over from a design the language never took — nothing in the parser ever
+  consumed one, so their only effect was to make `if = 5` fail with "Unexpected token"
+  instead of binding a variable. They lex as ordinary identifiers now, the way `for`
+  did when its loop was removed, which makes the no-keywords claim literally true: not
+  one word is reserved.
 - **Breaking: every member of an overload set must annotate its return type**, as it
   already had to annotate every parameter. A member's return type used to default to
   `Num` when omitted and was corrected only after its body was checked, so what a call

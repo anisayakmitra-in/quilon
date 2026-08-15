@@ -10,7 +10,7 @@ Quilon is a statically-typed, **symbol-based** language (no control-flow keyword
 
 Quilon's identity, and the rules that guide its design:
 
-- **No keywords.** Every construct is punctuation, not words — *nothing was removed from the language; the words were.* Branching is `?` / `|`, the entry point is `^`, import/export are `<<` / `>>`, mutability is `:=`, sum-type alternatives are `/`. (`for` is the lone surviving word — a known wart, slated for removal.)
+- **No keywords.** Every construct is punctuation, not words — *nothing was removed from the language; the words were.* Branching is `?` / `|`, the entry point is `^`, import/export are `<<` / `>>`, mutability is `:=`, sum-type alternatives are `/`. Not one word is reserved: `if`, `while`, `for` and the rest are ordinary identifiers you may bind.
 - **Symbols mirror notation that already exists.** A symbol should reuse a notation the world already has rather than invent one: `/` separates sum-type alternatives the way you already write "red / green / blue". The symbol is both the shorthand and its own justification.
 - **The playful choice wins.** When a design decision is a genuine toss-up, the more delightful option is picked — characterful, memorable symbols (`^` for the entry point, `$` for Unit) over bland ones. Syntax is allowed to have a sense of humor.
 - **Deliberate simplicity — reject complexity.** The smallest system that works: no generics (ad-hoc overloading is the only polymorphism), no `while`, no interfaces, a single `Num` type. Features are omitted on purpose.
@@ -48,6 +48,7 @@ Quilon's identity, and the rules that guide its design:
 
 There are **no keywords**: `if`/`return` etc. are all expressed with symbols, and there
 are no loop constructs at all — iteration is via [array methods and recursion](#iteration--array-methods--recursion).
+No word is reserved either, so `if = 5` or a function named `while` is perfectly legal.
 
 ---
 

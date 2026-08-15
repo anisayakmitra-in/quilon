@@ -132,13 +132,6 @@ pub enum TokenKind {
     #[token("false")]
     False,
 
-    // Keywords
-    #[token("if")]
-    If,
-
-    #[token("while")]
-    While,
-
     #[token("_")]
     Underscore,
 
