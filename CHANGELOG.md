@@ -6,6 +6,14 @@ All notable changes to Quilon are documented here.
 
 ### Added
 
+- **A functional update may name the type it builds:** `Vec { <-p, x = 9 }` alongside
+  the anonymous `{ <-p, x = 9 }`. Both forms now parse through the same field list, so a
+  spread is accepted wherever record fields are. Naming the target constrains the source:
+  it must **already be that type**, or an **anonymous record of exactly its shape** (same
+  fields and types, nothing extra). A different named type is never accepted, however
+  similar — `Point` and `Other` remain distinct — and an anonymous record cannot fill a
+  type that declares methods, since it carries none. Every declared field must end up
+  provided, by the spread or by an override. See `examples/spread.ql`.
 - **String interpolation / format strings.** A string literal may contain
   **interpolation holes** — an arbitrary expression wrapped in backticks — which
   are rendered to `Text` and spliced in: `` "hi `user.name`" ``,

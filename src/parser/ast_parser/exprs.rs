@@ -523,23 +523,7 @@ impl<'a> Parser<'a> {
                     let start = span.start;
                     self.advance(); // consume '{'
 
-                    let mut fields = Vec::new();
-
-                    if !self.check(&TokenKind::BraceClose) {
-                        loop {
-                            let field_name = self.expect_ident()?;
-                            self.expect(&TokenKind::Assign)?;
-                            let value = self.parse_expr()?;
-                            fields.push((field_name, value));
-
-                            if !self.check(&TokenKind::Comma) {
-                                break;
-                            }
-                            self.advance();
-                        }
-                    }
-
-                    self.expect(&TokenKind::BraceClose)?;
+                    let fields = self.parse_record_fields()?;
                     let span = self.span(start, self.previous_span().end);
 
                     Ok(Expr::Constructor {
@@ -652,18 +636,16 @@ impl<'a> Parser<'a> {
         Ok(params)
     }
 
-    pub(super) fn parse_record(&mut self) -> Result<Expr, ParseError> {
-        let start = self.current_span();
-        self.expect(&TokenKind::BraceOpen)?;
-
+    /// The `{ … }` field list shared by an anonymous record literal and a named
+    /// constructor: `name = value` entries, and `<-source` spread entries carrying the
+    /// empty-string name (never a valid identifier) as their sentinel — consumers
+    /// discriminate on `Expr::Spread`, not on the name. Assumes the opening brace is
+    /// already consumed and consumes the closing one.
+    pub(super) fn parse_record_fields(&mut self) -> Result<Vec<(String, Expr)>, ParseError> {
         let mut fields = Vec::new();
 
         if !self.check(&TokenKind::BraceClose) {
             loop {
-                // A field beginning with `<-` is a SPREAD (functional update):
-                // `{<-p, x = 9}` copies every field of `p`, then applies overrides. A
-                // spread field carries the empty-string name (never a valid identifier)
-                // as its sentinel — consumers discriminate on `Expr::Spread`, not the name.
                 if let Some(spread) = self.try_parse_spread()? {
                     fields.push((String::new(), spread));
                 } else {
@@ -681,6 +663,13 @@ impl<'a> Parser<'a> {
         }
 
         self.expect(&TokenKind::BraceClose)?;
+        Ok(fields)
+    }
+
+    pub(super) fn parse_record(&mut self) -> Result<Expr, ParseError> {
+        let start = self.current_span();
+        self.expect(&TokenKind::BraceOpen)?;
+        let fields = self.parse_record_fields()?;
         let span = self.span(start.start, self.previous_span().end);
 
         Ok(Expr::Record { fields, span })
