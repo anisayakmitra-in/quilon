@@ -356,25 +356,6 @@ impl TypeChecker {
                 }
             }
 
-            Expr::SumConstructor {
-                variant,
-                args,
-                span,
-            } => {
-                // A sum-type constructor in expression position (e.g. `Ok(x)`).
-                // The parser currently lowers `Ok(..)`/`NotOk(..)` to `Expr::Call`,
-                // so in practice constructors are type-checked in `check_call`;
-                // this arm makes a direct `SumConstructor` node type-check the same
-                // way (variant lookup + arity + payload type) instead of erroring.
-                match self.check_constructor_call(variant, args, span)? {
-                    Some(sum_type) => Ok(sum_type),
-                    None => Err(TypeError::UndefinedVariable {
-                        name: format!("Unknown sum-type constructor: {}", variant),
-                        span: span.clone(),
-                    }),
-                }
-            }
-
             Expr::Range { start, end, span } => {
                 // `lo <- hi` materializes an inclusive `[]Num`; both ends must be Num.
                 let start_type = self.infer_expr(start)?;

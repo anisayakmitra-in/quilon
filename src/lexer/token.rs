@@ -1,7 +1,6 @@
 // Token types for Quilon lexer
 
 use logos::Logos;
-use std::fmt;
 
 /// Which source a [`Span`]'s byte offsets index into. `ROOT_FILE` is the file the
 /// compiler was invoked on; every `<<`-loaded module gets its own id from the module
@@ -74,12 +73,6 @@ impl Span {
             }
         }
         (line, col)
-    }
-}
-
-impl fmt::Display for Span {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}..{}", self.start, self.end)
     }
 }
 
@@ -413,69 +406,6 @@ fn scan_string_end(bytes: &[u8], mut i: usize) -> Option<usize> {
     None
 }
 
-impl fmt::Display for TokenKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            TokenKind::Number(n) => write!(f, "Number({})", n.0),
-            TokenKind::String(chunks) => {
-                write!(f, "String(")?;
-                for chunk in chunks {
-                    match chunk {
-                        StrChunk::Lit(s) => write!(f, "{}", s)?,
-                        StrChunk::Hole { src, .. } => write!(f, "`{}`", src)?,
-                    }
-                }
-                write!(f, ")")
-            }
-            TokenKind::True => write!(f, "true"),
-            TokenKind::False => write!(f, "false"),
-            TokenKind::If => write!(f, "if"),
-            TokenKind::While => write!(f, "while"),
-            TokenKind::Underscore => write!(f, "_"),
-            TokenKind::Ident => write!(f, "Ident"),
-            TokenKind::Assign => write!(f, "="),
-            TokenKind::MutAssign => write!(f, ":="),
-            TokenKind::Arrow => write!(f, "=>"),
-            TokenKind::ReturnArrow => write!(f, "->"),
-            TokenKind::LeftArrow => write!(f, "<-"),
-            TokenKind::TypeAnnotation => write!(f, "::"),
-            TokenKind::Pipeline => write!(f, "|>"),
-            TokenKind::EntryPoint => write!(f, "^"),
-            TokenKind::Unit => write!(f, "$"),
-            TokenKind::Export => write!(f, ">>"),
-            TokenKind::Import => write!(f, "<<"),
-            TokenKind::Question => write!(f, "?"),
-            TokenKind::Pipe => write!(f, "|"),
-            TokenKind::BlockOpen => write!(f, "<"),
-            TokenKind::BlockClose => write!(f, ">"),
-            TokenKind::Gt => write!(f, ">"),
-            TokenKind::BraceOpen => write!(f, "{{"),
-            TokenKind::BraceClose => write!(f, "}}"),
-            TokenKind::ParenOpen => write!(f, "("),
-            TokenKind::ParenClose => write!(f, ")"),
-            TokenKind::BracketOpen => write!(f, "["),
-            TokenKind::BracketClose => write!(f, "]"),
-            TokenKind::Comma => write!(f, ","),
-            TokenKind::Dot => write!(f, "."),
-            TokenKind::Plus => write!(f, "+"),
-            TokenKind::Minus => write!(f, "-"),
-            TokenKind::Star => write!(f, "*"),
-            TokenKind::Slash => write!(f, "/"),
-            TokenKind::Percent => write!(f, "%"),
-            TokenKind::Eq => write!(f, "=="),
-            TokenKind::Ne => write!(f, "!="),
-            TokenKind::Le => write!(f, "<="),
-            TokenKind::Ge => write!(f, ">="),
-            TokenKind::And => write!(f, "&&"),
-            TokenKind::Or => write!(f, "||"),
-            TokenKind::Not => write!(f, "!"),
-            TokenKind::Colon => write!(f, ":"),
-            TokenKind::Backtick => write!(f, "`"),
-            TokenKind::Eof => write!(f, "EOF"),
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct Token {
     pub kind: TokenKind,
@@ -484,10 +414,4 @@ pub struct Token {
     /// Whether this token is the first token on its source line. Feeds the parser's
     /// line-first `(` / `[` statement-boundary rule (see `Parser::check_same_line`).
     pub first_on_line: bool,
-}
-
-impl fmt::Display for Token {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} at {}", self.kind, self.span)
-    }
 }

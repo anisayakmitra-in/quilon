@@ -47,12 +47,6 @@ pub enum TypeError {
         got: usize,
         span: Span,
     },
-    // Reserved diagnostics not yet emitted by the 0.9 checker.
-    #[allow(dead_code)]
-    CannotInfer {
-        expr: String,
-        span: Span,
-    },
     ImmutableAssignment {
         name: String,
         span: Span,
@@ -125,12 +119,6 @@ pub enum TypeError {
         got: Box<Type>,
         span: Span,
     },
-    #[allow(dead_code)]
-    PatternTypeMismatch {
-        expected: Box<Type>,
-        got: Box<Type>,
-        span: Span,
-    },
     /// A constructor pattern's argument was itself refutable (a literal or a nested
     /// constructor, e.g. `Ok(1)` or `Ok(Ok(x))`). Codegen dispatches on the constructor
     /// tag alone and would silently ignore the sub-pattern — the arm would match ANY
@@ -195,12 +183,9 @@ pub(crate) fn types_match(param: &Type, arg: &Type) -> bool {
 
 #[derive(Debug, Clone)]
 // `pub` so it doesn't leak through the public `Environment::lookup` signature.
-// `span` is recorded for diagnostics not yet emitted (source spans in errors).
-#[allow(dead_code)]
 pub struct Symbol {
     type_: Type,
     mutable: bool,
-    span: Span,
 }
 
 #[derive(Debug, Clone)]

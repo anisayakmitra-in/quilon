@@ -168,11 +168,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                     Self::collect_mutable_locals(e, out);
                 }
             }
-            Expr::SumConstructor { args, .. } => {
-                for a in args {
-                    Self::collect_mutable_locals(a, out);
-                }
-            }
             Expr::Spread { expr, .. } => Self::collect_mutable_locals(expr, out),
             Expr::Interpolation { parts, .. } => {
                 for part in parts {
@@ -293,11 +288,6 @@ impl<'ctx> CodeGenerator<'ctx> {
             Expr::Record { fields, .. } | Expr::Constructor { fields, .. } => {
                 for (_, e) in fields {
                     Self::walk_exprs(e, f);
-                }
-            }
-            Expr::SumConstructor { args, .. } => {
-                for a in args {
-                    Self::walk_exprs(a, f);
                 }
             }
             Expr::Spread { expr, .. } => Self::walk_exprs(expr, f),

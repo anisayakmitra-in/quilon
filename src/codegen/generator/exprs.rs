@@ -151,8 +151,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let call = Expr::desugar_pipeline(left, right, span);
                 self.generate_expr(&call)
             }
-
-            _ => Err(format!("Unsupported expression type: {:?}", expr)),
         }
     }
 

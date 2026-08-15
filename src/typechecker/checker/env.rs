@@ -38,14 +38,7 @@ impl Environment {
             return Err(TypeError::DuplicateDefinition { name, span });
         }
 
-        current_scope.insert(
-            name,
-            Symbol {
-                type_,
-                mutable,
-                span,
-            },
-        );
+        current_scope.insert(name, Symbol { type_, mutable });
         Ok(())
     }
 

@@ -290,7 +290,6 @@ impl TypeChecker {
                     methods: methods.iter().map(|m| m.name.clone()).collect(),
                 }
             }
-            TypeDef::Alias(ty) => ty.clone(),
         };
 
         // Register the type name in the environment

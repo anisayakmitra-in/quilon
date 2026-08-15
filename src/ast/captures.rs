@@ -159,11 +159,6 @@ fn collect(
                 collect(e, local, outer, seen, out);
             }
         }
-        Expr::SumConstructor { args, .. } => {
-            for a in args {
-                collect(a, local, outer, seen, out);
-            }
-        }
         Expr::Spread { expr, .. } => collect(expr, local, outer, seen, out),
     }
 }

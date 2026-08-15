@@ -12,7 +12,6 @@ impl TypeError {
             | TypeError::TypeMismatch { span, .. }
             | TypeError::NotAFunction { span, .. }
             | TypeError::WrongNumberOfArguments { span, .. }
-            | TypeError::CannotInfer { span, .. }
             | TypeError::ImmutableAssignment { span, .. }
             | TypeError::ImmutableFieldWrite { span, .. }
             | TypeError::MutatingMethodOnImmutable { span, .. }
@@ -24,7 +23,6 @@ impl TypeError {
             | TypeError::UnannotatedOverloadCall { span, .. }
             | TypeError::UnannotatedOverloadMember { span, .. }
             | TypeError::ComparisonOverloadNotBool { span, .. }
-            | TypeError::PatternTypeMismatch { span, .. }
             | TypeError::RefutableConstructorArg { span, .. }
             | TypeError::NonExhaustiveMatch { span }
             | TypeError::InvalidEntryPointSignature { span, .. }
@@ -51,9 +49,6 @@ impl std::fmt::Display for TypeError {
                     "Wrong number of arguments: expected {}, got {}",
                     expected, got
                 )
-            }
-            TypeError::CannotInfer { expr, .. } => {
-                write!(f, "Cannot infer type for '{}'", expr)
             }
             TypeError::ImmutableAssignment { name, .. } => {
                 write!(f, "Cannot assign to immutable variable '{}'", name)
@@ -141,13 +136,6 @@ impl std::fmt::Display for TypeError {
                     "comparison operator '{}' overload must return Bool, found {}",
                     operator,
                     type_label(got)
-                )
-            }
-            TypeError::PatternTypeMismatch { expected, got, .. } => {
-                write!(
-                    f,
-                    "Pattern type mismatch: expected {:?}, got {:?}",
-                    expected, got
                 )
             }
             TypeError::RefutableConstructorArg { constructor, .. } => {
