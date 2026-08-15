@@ -15,10 +15,10 @@
   assertEq(home, "/home/quilon")
   empty :: Text = getEnv(env, "EMPTY") ? | Ok(v) => v | NotOk(_) => "?"
   assertEq(empty, "")
-  pathPresent :: Bool = getEnv(env, "PATH") ? | Ok(_) => true | NotOk(_) => false
-  assert(pathPresent)
-  missingPresent :: Bool = getEnv(env, "MISSING") ? | Ok(_) => true | NotOk(_) => false
-  assert(!missingPresent)
+  ~ assertOk / assertNotOk take a Result of ANY payload — here getEnv's `Ok(Text)` — through
+  ~ their generic `(r :: Result)` parameter, so no match -> Bool bridge is needed.
+  assertOk(getEnv(env, "PATH"))
+  assertNotOk(getEnv(env, "MISSING"))
 
   ~ hasFlag: true when the bare flag appears; the name works with or without `--`.
   args :: []Text = ["prog", "--out", "a.txt", "--out=b.txt", "-v", "--verbose", "--empty="]
@@ -44,8 +44,9 @@
   ~ An absent option is NotOk, carrying the requested name.
   missName :: Text = getOpt(args, "nope") ? | Ok(_) => "?" | NotOk(n) => n
   assertEq(missName, "nope")
-  nopePresent :: Bool = getOpt(args, "nope") ? | Ok(_) => true | NotOk(_) => false
-  assert(!nopePresent)
+  ~ assertNotOk on getOpt's `Ok([]Text)` / `NotOk(Text)` — a composite-payload Result
+  ~ flowing straight through the generic assertion.
+  assertNotOk(getOpt(args, "nope"))
 
   ~ argv[0] is skipped: the leading "--out" and its value are ignored, so only "real"
   ~ (the option after argv[0]) is collected.
@@ -56,8 +57,9 @@
 
   ~ A trailing option with no following value collects nothing, so it is NotOk(name).
   trailArgs :: []Text = ["prog", "--out"]
-  trailNotOk :: Bool = getOpt(trailArgs, "out") ? | Ok(_) => false | NotOk(_) => true
-  assert(trailNotOk)
+  assertNotOk(getOpt(trailArgs, "out"))
+  ~ An Ok result of the same generic call passes assertOk just as directly.
+  assertOk(getOpt(args, "out"))
   ~ The `--name=` form always supplies a value (the empty string), so it stays Ok([""]).
   eqEmpty :: []Text = getOpt(["prog", "--tag="], "tag") ? | Ok(vs) => vs | NotOk(_) => none
   assertEq(eqEmpty.size, 1)

@@ -6,6 +6,20 @@ All notable changes to Quilon are documented here.
 
 ### Added
 
+- **Uniform `Result` layout — a `Result` of any payload flows through a generic
+  `(r :: Result)` parameter/return.** Every `Result` now has a single canonical LLVM
+  shape `{ i8 tag, {ptr,i64} slot }`: a `Text` or array payload fills the slot
+  directly, and a scalar (`Num`/`Bool`/`$`) is packed into it, then unpacked back to
+  its concrete type at the match site. Previously a `Result` was sized to its actual
+  payload per value, so a composite-payload result (`Ok("x")`, `Ok(["a"])`) had a
+  different LLVM type from the `{ i8, double }` a generic `(r :: Result)` parameter
+  expected, and the call was rejected by the verifier. With one shape, `assertOk` /
+  `assertNotOk` (`core.test`) now accept a `Result` of **any** payload — including the
+  composite-payload results of `getEnv` / `getOpt` — so `examples/cli.ql` asserts them
+  directly instead of bridging through a `match → Bool`. Matching by variant (`Ok` vs
+  `NotOk`) works on any `Result` anywhere; extracting a payload still needs its concrete
+  type in scope at the match site (there are no generics). Debug (`--debug`) DWARF and
+  format-string rendering of a `Result` follow the new layout.
 - **String interpolation / format strings.** A string literal may contain
   **interpolation holes** — an arbitrary expression wrapped in backticks — which
   are rendered to `Text` and spliced in: `` "hi `user.name`" ``,

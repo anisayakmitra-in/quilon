@@ -783,7 +783,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         let result_ty = self.result_struct_type(elem_llvm);
         let result_ptr = self.create_entry_block_alloca("find_result", result_ty.into())?;
         // Default: NotOk (tag 1, zeroed payload).
-        let not_ok = self.build_result(elem_llvm, "NotOk", zeroed(elem_llvm));
+        let not_ok = self.build_result(elem_llvm, "NotOk", zeroed(elem_llvm))?;
         self.builder
             .build_store(result_ptr, not_ok)
             .map_err(ctx("Failed to init find result"))?;
@@ -827,7 +827,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Found: store Ok(elem) and jump to done. `body` dominates `found_bb`, so the
         // `elem` already loaded above is in scope here — no need to reload it.
         self.builder.position_at_end(found_bb);
-        let ok = self.build_result(elem_llvm, "Ok", elem);
+        let ok = self.build_result(elem_llvm, "Ok", elem)?;
         self.builder
             .build_store(result_ptr, ok)
             .map_err(ctx("Failed to store find Ok"))?;
@@ -918,7 +918,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             .build_float_to_signed_int(idx_f, i64t, "at_idx")
             .map_err(ctx("Failed to convert at index"))?;
         let elem = self.load_element(data_ptr, elem_llvm, idx)?;
-        let ok = self.build_result(elem_llvm, "Ok", elem);
+        let ok = self.build_result(elem_llvm, "Ok", elem)?;
         self.builder
             .build_store(result_ptr, ok)
             .map_err(ctx("Failed to store at Ok"))?;
@@ -926,7 +926,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             .build_unconditional_branch(cont_bb)
             .map_err(ctx("Failed to branch at ok cont"))?;
         self.builder.position_at_end(no_bb);
-        let no = self.build_result(elem_llvm, "NotOk", zeroed(elem_llvm));
+        let no = self.build_result(elem_llvm, "NotOk", zeroed(elem_llvm))?;
         self.builder
             .build_store(result_ptr, no)
             .map_err(ctx("Failed to store at NotOk"))?;

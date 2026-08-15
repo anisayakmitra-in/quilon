@@ -13,38 +13,45 @@ impl<'ctx> CodeGenerator<'ctx> {
         type_name: &str,
         args: &[Expr],
     ) -> Result<BasicValueEnum<'ctx>, String> {
-        // Tagged-union value: { i8 tag, slot0, slot1, ... }.
-        //
-        // The slot types come from one of two sources:
-        //  - USER sum types have a registered canonical layout (`sum_layouts`), sized to
-        //    the widest variant, so EVERY value of the type shares one struct shape and a
-        //    match arm can extract any variant's slots without going out of range:
+        // Tagged-union value: { i8 tag, slot0, slot1, ... }. Every sum type has a registered
+        // canonical layout (`sum_layouts`), so EVERY value of the type shares one struct shape
+        // and a match arm can extract any variant's slots without going out of range:
+        //  - USER sum types are sized to the widest variant, one slot per payload position:
         //      Rect(3, 4) -> { i8 1, double 3.0, double 4.0 }
         //      Circle(9)  -> { i8 0, double 9.0, double <undef> }   (slot 1 unused)
-        //  - `Result` has NO registered layout: it's sized to the actual payload value,
-        //    preserving the historical per-value representation across its generic,
-        //    possibly-heterogeneous variants:
-        //      Ok(42)       -> { i8 0, double 42.0 }
-        //      NotOk("err") -> { i8 1, ptr <str> }
+        //  - `Result` has ONE canonical `{ptr,i64}` slot into which ANY payload is PACKED
+        //    (`pack_result_payload`), so its heterogeneous, generic variants still share the
+        //    single shape `{ i8, {ptr,i64} }`:
+        //      Ok(42)       -> { i8 0, {ptr,i64} {null, <42.0 bits>} }
+        //      NotOk("err") -> { i8 1, {ptr,i64} <the Text struct> }
         //
-        // Num/Bool payloads are normalized to f64. A `$` (Unit) payload is zero-sized; it
-        // is stored as a zero of the slot type so the value still matches the slot/return
-        // shape (e.g. `Ok($)` -> { i8 0, double 0.0 }) — the bits are never read.
+        // For USER slots, Num/Bool payloads are normalized to f64 and a `$` (Unit) payload is
+        // stored as a zero of the slot type so the value still matches the slot/return shape
+        // (e.g. `Ok($)` packs a zeroed slot) — the bits are never read.
         let i8_type = self.context.i8_type();
         let f64_type = self.context.f64_type();
         let registered_layout = self.sum_layouts.get(type_name).cloned();
 
         let tag_val = i8_type.const_int(tag as u64, false);
 
-        // Determine each payload slot's value and type. For a registered layout, the slot
-        // type is fixed by position; otherwise (Result) it follows the value, with a `$`
-        // payload defaulting to the canonical `double` slot.
+        // Determine each payload slot's value. `Result` packs its payload into the one
+        // canonical `{ptr,i64}` slot; a user type's slot type is fixed by position from its
+        // registered layout (the `None` arms below only fire for the unregistered-name
+        // fallback, e.g. an IR-only test that skips declaration).
+        let is_result = type_name == "Result";
         let mut payload_vals: Vec<BasicValueEnum> = Vec::with_capacity(args.len());
         for (pos, arg) in args.iter().enumerate() {
             let arg_val = self.generate_expr(arg)?;
+            if is_result {
+                // Result has a single canonical `{ptr,i64}` slot; PACK the payload into it
+                // (a Text/array fills it directly, a scalar goes into one field) so every
+                // Result shares the `{ i8, {ptr,i64} }` shape regardless of payload.
+                payload_vals.push(self.pack_result_payload(arg_val)?);
+                continue;
+            }
             // With a registered layout (user type), the slot type is fixed by position.
-            // Without one (Result), the slot follows the value's own type so a Text/Bool
-            // payload keeps its real representation — except a `$` (Unit) value, which is
+            // Without one, the slot follows the value's own type so a Text/Bool payload
+            // keeps its real representation — except a `$` (Unit) value, which is
             // zero-sized and defaults to the canonical `double` slot.
             let slot_ty = match registered_layout.as_ref().and_then(|l| l.get(pos).copied()) {
                 Some(ty) => ty,
@@ -124,33 +131,175 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
     }
 
-    /// The `{ i8 tag, elem }` struct that `find`/`at` return — a per-element-typed
-    /// `Result` whose single payload slot holds the element (matching the Result-style
-    /// per-value layout the pattern-match consumer extracts from field 1).
-    pub(super) fn result_struct_type(
+    /// Pack a Result payload `value` into the canonical `{ptr,i64}` slot, so any payload —
+    /// scalar or composite — shares one LLVM shape. The reverse of [`unpack_result_payload`],
+    /// which must read back the SAME concrete type this packed:
+    ///   - `Text` / array (already `{ptr,i64}`): stored directly as the whole slot.
+    ///   - `Num` (f64): its bits go into field `.1` (bitcast to i64), `.0` = null.
+    ///   - `Bool` (i1): zero-extended into field `.1`, `.0` = null.
+    ///   - `$` (Unit, a zero `i8`) / anything else scalar: a zeroed slot.
+    ///   - a record pointer: stored into field `.0`, `.1` = 0.
+    ///   - any other aggregate wider than the slot (a user sum value, a nested `Result`, a
+    ///     closure): stored in a GC box, whose pointer rides in field `.0`.
+    pub(super) fn pack_result_payload(
         &self,
-        elem_llvm: BasicTypeEnum<'ctx>,
-    ) -> inkwell::types::StructType<'ctx> {
-        self.context
-            .struct_type(&[self.context.i8_type().into(), elem_llvm], false)
+        value: BasicValueEnum<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>, String> {
+        let slot_ty = self.ptr_len_struct_type();
+        // A `{ptr,i64}` value (Text or array) already IS the slot.
+        if value.get_type() == slot_ty.into() {
+            return Ok(value);
+        }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i64_ty = self.context.i64_type();
+        let (ptr_field, int_field) = match value {
+            // A record/opaque pointer payload rides in the pointer field.
+            BasicValueEnum::PointerValue(p) => (p, i64_ty.const_zero()),
+            // A Num (f64) payload: reinterpret its bits as i64 in the integer field.
+            BasicValueEnum::FloatValue(f) => {
+                let bits = self
+                    .builder
+                    .build_bit_cast(f, i64_ty, "num_bits")
+                    .map_err(ctx("Failed to bitcast Num payload"))?
+                    .into_int_value();
+                (ptr_ty.const_null(), bits)
+            }
+            // A Bool (i1) payload: zero-extend into the integer field.
+            BasicValueEnum::IntValue(i) if i.get_type().get_bit_width() == 1 => {
+                let ext = self
+                    .builder
+                    .build_int_z_extend(i, i64_ty, "bool_ext")
+                    .map_err(ctx("Failed to extend Bool payload"))?;
+                (ptr_ty.const_null(), ext)
+            }
+            // A `$` (Unit) payload — the zero `i8` — carries no bits: a zeroed slot.
+            BasicValueEnum::IntValue(i) if i.get_type().get_bit_width() == 8 => {
+                (ptr_ty.const_null(), i64_ty.const_zero())
+            }
+            // A composite payload wider than the slot — a user sum value `{i8,…}`, a nested
+            // `Result`, a closure `{ptr,ptr}` — is BOXED: GC-allocate storage, copy the value
+            // in, and keep the box pointer in field `.0`. `unpack_result_payload` loads it
+            // back through the same pointer for the matching aggregate target type.
+            BasicValueEnum::StructValue(_) => {
+                let box_ptr = self.alloc_box(value.get_type())?;
+                self.builder
+                    .build_store(box_ptr, value)
+                    .map_err(ctx("Failed to box Result payload"))?;
+                (box_ptr, i64_ty.const_zero())
+            }
+            other => {
+                return Err(format!(
+                    "internal error: Result payload of type {:?} does not fit the {{ptr,i64}} slot",
+                    other.get_type()
+                ));
+            }
+        };
+        let slot = self
+            .builder
+            .build_insert_value(slot_ty.get_undef(), ptr_field, 0, "slot_ptr")
+            .map_err(ctx("Failed to pack Result ptr"))?
+            .into_struct_value();
+        let slot = self
+            .builder
+            .build_insert_value(slot, int_field, 1, "slot_int")
+            .map_err(ctx("Failed to pack Result bits"))?
+            .into_struct_value();
+        Ok(slot.into())
     }
 
-    /// Build the `{ i8 tag, payload }` value that `find`/`at` return, tagged as Result
-    /// variant `variant` (`"Ok"` / `"NotOk"`). The tag number is read from the shared
-    /// sum-variant registry (`register_builtin_sum_types`) — the same source the
-    /// pattern-match consumer uses — so construction and matching can never drift apart.
+    /// Read a Result payload back out of the canonical `{ptr,i64}` slot as its concrete
+    /// `target` type — the reverse of [`pack_result_payload`]. `target` comes from the
+    /// scrutinee's oracle type (`Ok("x")` => `Text`); a still-generic/unknown payload reads
+    /// as `Num` (the historical fallback), matching how generic payloads are materialized
+    /// elsewhere.
+    pub(super) fn unpack_result_payload(
+        &self,
+        slot: BasicValueEnum<'ctx>,
+        target: Option<&Type>,
+    ) -> Result<BasicValueEnum<'ctx>, String> {
+        let slot_struct = slot.into_struct_value();
+        let repr = match target {
+            Some(t) => self.value_repr_type(t)?,
+            None => self.context.f64_type().into(),
+        };
+        // A `{ptr,i64}` target (Text / array) IS the whole slot.
+        if repr == self.ptr_len_struct_type().into() {
+            return Ok(slot);
+        }
+        let int_field = || -> Result<inkwell::values::IntValue<'ctx>, String> {
+            self.builder
+                .build_extract_value(slot_struct, 1, "slot_int")
+                .map_err(ctx("Failed to read Result slot int"))
+                .map(|v| v.into_int_value())
+        };
+        match repr {
+            // A pointer target (record) rides in the pointer field.
+            BasicTypeEnum::PointerType(_) => Ok(self
+                .builder
+                .build_extract_value(slot_struct, 0, "slot_ptr")
+                .map_err(ctx("Failed to read Result slot ptr"))?),
+            // A Num: reinterpret the integer field's bits back to f64.
+            BasicTypeEnum::FloatType(f) => Ok(self
+                .builder
+                .build_bit_cast(int_field()?, f, "num_from_bits")
+                .map_err(ctx("Failed to bitcast Result payload"))?),
+            // A Bool: truncate the integer field back to i1.
+            BasicTypeEnum::IntType(t) if t.get_bit_width() == 1 => Ok(self
+                .builder
+                .build_int_truncate(int_field()?, t, "bool_from_slot")
+                .map_err(ctx("Failed to truncate Result payload"))?
+                .into()),
+            // Unit (`$`) or any other narrow int: the canonical zero `i8` Unit value.
+            BasicTypeEnum::IntType(_) => Ok(self.unit_value().into()),
+            // An aggregate target (a user sum value, a nested `Result`, a closure) was BOXED
+            // by `pack_result_payload`: load it back through the box pointer in field `.0`.
+            BasicTypeEnum::StructType(st) => {
+                let box_ptr = self
+                    .builder
+                    .build_extract_value(slot_struct, 0, "slot_box")
+                    .map_err(ctx("Failed to read Result box ptr"))?
+                    .into_pointer_value();
+                self.builder
+                    .build_load(st, box_ptr, "unbox_payload")
+                    .map_err(ctx("Failed to unbox Result payload"))
+            }
+            other => Err(format!(
+                "internal error: Result payload target {:?} not supported",
+                other
+            )),
+        }
+    }
+
+    /// The canonical Result LLVM struct `{ i8 tag, {ptr,i64} slot }` that `find`/`at`
+    /// return — one shape for every Result (see `register_builtin_sum_types`). `elem_llvm`
+    /// is unused (kept so the array methods read as intent-revealing) since the payload
+    /// rides in the uniform packed slot.
+    pub(super) fn result_struct_type(
+        &self,
+        _elem_llvm: BasicTypeEnum<'ctx>,
+    ) -> inkwell::types::StructType<'ctx> {
+        self.sum_struct_type("Result")
+    }
+
+    /// Build the canonical `{ i8 tag, {ptr,i64} slot }` value that `find`/`at` return, tagged
+    /// as Result variant `variant` (`"Ok"` / `"NotOk"`). The tag number is read from the
+    /// shared sum-variant registry (`register_builtin_sum_types`) — the same source the
+    /// pattern-match consumer uses — so construction and matching can never drift apart. The
+    /// `payload` is PACKED into the uniform slot (`pack_result_payload`), matching how
+    /// `generate_sum_constructor` builds a Result, so both are matched/unpacked identically.
     pub(super) fn build_result(
         &mut self,
-        elem_llvm: BasicTypeEnum<'ctx>,
+        _elem_llvm: BasicTypeEnum<'ctx>,
         variant: &str,
         payload: BasicValueEnum<'ctx>,
-    ) -> BasicValueEnum<'ctx> {
+    ) -> Result<BasicValueEnum<'ctx>, String> {
         let tag = self
             .sum_variants
             .get(variant)
             .map(|(t, _)| *t)
             .unwrap_or_else(|| panic!("Result variant `{variant}` is not registered"));
-        let struct_ty = self.result_struct_type(elem_llvm);
+        let struct_ty = self.sum_struct_type("Result");
+        let slot = self.pack_result_payload(payload)?;
         let tag_val = self.context.i8_type().const_int(tag as u64, false);
         let mut agg = struct_ty.get_undef();
         agg = self
@@ -160,16 +309,17 @@ impl<'ctx> CodeGenerator<'ctx> {
             .into_struct_value();
         agg = self
             .builder
-            .build_insert_value(agg, payload, 1, "res_payload")
+            .build_insert_value(agg, slot, 1, "res_payload")
             .expect("insert result payload")
             .into_struct_value();
-        agg.into()
+        Ok(agg.into())
     }
 
     /// The tagged-union LLVM struct for a sum type: `{ i8 tag, slot0, slot1, ... }`,
-    /// where the slots come from the registered canonical payload layout. Falls back to
-    /// the Result-style `{ i8, double }` for an unregistered name (e.g. a `-> Result`
-    /// annotation reached before any user declaration), keeping the historical shape.
+    /// where the slots come from the registered canonical payload layout. Both user sum
+    /// types and the built-in `Result` are registered (`register_builtin_sum_types` gives
+    /// Result its single `{ptr,i64}` slot); the `{ i8, double }` fallback only fires for an
+    /// unregistered name, e.g. an IR-only test that skips type declaration.
     pub(super) fn sum_struct_type(&self, name: &str) -> inkwell::types::StructType<'ctx> {
         let mut field_types: Vec<BasicTypeEnum> = vec![self.context.i8_type().into()];
         match self.sum_layouts.get(name) {
@@ -179,21 +329,17 @@ impl<'ctx> CodeGenerator<'ctx> {
         self.context.struct_type(&field_types, false)
     }
 
-    /// The tagged-union LLVM struct for a sum-typed *value* of type `Type::Sum`. A USER
-    /// sum type has a registered canonical layout, so this defers to [`sum_struct_type`].
-    /// The built-in `Result` has NONE (its payload is sized per value across its generic,
-    /// heterogeneous variants), so its slot types are recovered from the CONCRETE
-    /// (specialized) variant payloads this `Type::Sum` carries: `Result[Ok(Text)]` =>
-    /// `{ i8, Text }`, so a function returning `Ok("x")` gets a return type matching the
-    /// value the body actually produces.
+    /// The tagged-union LLVM struct for a sum-typed *value* of type `Type::Sum`. Every sum
+    /// type — user types AND the built-in `Result` (which has one canonical `{ptr,i64}` slot
+    /// into which any payload is packed) — has a registered canonical layout, so this defers
+    /// to [`sum_struct_type`], giving `Result` the single shape `{ i8, {ptr,i64} }` whatever
+    /// its concrete `Ok`/`NotOk` payload.
     ///
-    /// This MUST agree with `generate_sum_constructor`'s per-value Result shape: there a
-    /// `Generic` slot has no value and a `$` (Unit) payload is stored into the canonical
-    /// numeric `double` slot (a Unit carries no bits). So per slot we take the first field
-    /// that is neither `Generic` NOR `Unit` (the checker guarantees concrete fields at a
-    /// position agree) and lower it via [`value_repr_type`]; a slot that is only
-    /// generic/unit/absent falls back to `double`, preserving the historical
-    /// `{ i8, double }` shape for a still-generic or unit-only `Result`.
+    /// The per-position variant-scanning fallback below is only reached for an UNREGISTERED
+    /// `Type::Sum` (e.g. an IR-only test that skips declaration): per slot it takes the first
+    /// field that is neither `Generic` NOR `Unit` (the checker guarantees concrete fields at a
+    /// position agree) and lowers it via [`value_repr_type`]; a generic/unit/absent-only slot
+    /// falls back to `double`.
     pub(super) fn sum_value_struct_type(
         &self,
         name: &str,

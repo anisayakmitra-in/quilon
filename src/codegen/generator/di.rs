@@ -198,6 +198,12 @@ impl<'ctx> CodeGenerator<'ctx> {
         name: &str,
         variants: &[crate::ast::SumVariant],
     ) -> DIType<'ctx> {
+        // `Result` has ONE canonical `{ptr,i64}` payload slot (any payload is packed into
+        // it — see `register_builtin_sum_types`), so its DWARF slot is that struct, not the
+        // per-position widest field the branch below derives for user sum types.
+        if name == "Result" {
+            return debug.sum_type(name, &[debug.ptr_len_slot()]);
+        }
         // Borrow the variant list rather than clone it (this only runs on a cache miss).
         let from_defs;
         let variants: &[crate::ast::SumVariant] = if !variants.is_empty() {
@@ -219,10 +225,9 @@ impl<'ctx> CodeGenerator<'ctx> {
             };
             slots.push(slot);
         }
-        // A nullary/generic sum (a payload-free enum, or `Result` whose generic payload isn't
-        // specialized here) still gets one slot so its `{ i8, .. }` shape is uniform — a
-        // `Num`-sized (8-byte) slot, matching `register_sum_variants`'s `double` placeholder and
-        // the per-value pointer-or-double Result payload (both 8 bytes wide).
+        // A nullary sum (a payload-free enum) still gets one slot so its `{ i8, .. }` shape is
+        // uniform — a `Num`-sized (8-byte) slot, matching `register_sum_variants`'s `double`
+        // placeholder. (`Result` is handled by the early return above, not here.)
         if slots.is_empty() {
             slots.push(debug.num_type());
         }
