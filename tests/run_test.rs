@@ -7,48 +7,11 @@ use quilon::lexer::Lexer;
 use quilon::parser;
 use quilon::typechecker::TypeChecker;
 use std::path::Path;
-use std::sync::Mutex;
 
-// LLVM's JIT and native-target initialization are not safe to run from multiple
-// threads at once; cargo runs tests in parallel, so serialize execution here.
-static JIT_LOCK: Mutex<()> = Mutex::new(());
-
-/// Compile and run `src`, asserting the entry point yields `expected`.
-fn assert_exit(src: &str, expected: i32) {
-    let _guard = JIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-
-    let tokens = Lexer::tokenize(src).expect("lexing failed");
-    let program = parser::parse(&tokens).expect("parsing failed");
-    let mut checker = TypeChecker::new();
-    checker
-        .check_program(&program)
-        .expect("type checking failed");
-
-    let code = jit::run_program(&program, &["program".to_string()]).expect("execution failed");
-    assert_eq!(code, expected, "unexpected exit code for source:\n{}", src);
-}
-
-/// Like `assert_exit`, but resolves `<<` imports (e.g. `<< core.io`) first, so
-/// programs that use core-lib functions can be run end-to-end.
-fn assert_exit_linked(src: &str, expected: i32) {
-    assert_exit_linked_from(src, Path::new("."), expected);
-}
-
-/// Like `assert_exit_linked`, but resolves file-path imports relative to `base_dir`.
-fn assert_exit_linked_from(src: &str, base_dir: &Path, expected: i32) {
-    let _guard = JIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-
-    let tokens = Lexer::tokenize(src).expect("lexing failed");
-    let program = parser::parse(&tokens).expect("parsing failed");
-    let program = quilon::modules::link(program, base_dir).expect("import linking failed");
-    let mut checker = TypeChecker::new();
-    checker
-        .check_program(&program)
-        .expect("type checking failed");
-
-    let code = jit::run_program(&program, &["program".to_string()]).expect("execution failed");
-    assert_eq!(code, expected, "unexpected exit code for source:\n{}", src);
-}
+mod common;
+use common::{
+    JIT_LOCK, assert_exit, assert_exit_linked, assert_exit_linked_from, assert_type_error,
+};
 
 #[test]
 fn run_simple_arithmetic() {
@@ -429,17 +392,6 @@ fn unit_is_incompatible_with_num() {
     );
 }
 
-/// Assert `src` is rejected by the type checker (front-end, no run).
-fn assert_check_err(src: &str) {
-    let tokens = Lexer::tokenize(src).expect("lexing failed");
-    let program = parser::parse(&tokens).expect("parsing failed");
-    let mut checker = TypeChecker::new();
-    assert!(
-        checker.check_program(&program).is_err(),
-        "expected a type error for source:\n{src}"
-    );
-}
-
 // --- Type-annotated bindings inside a `< >` block (parity with top-level). ---
 
 #[test]
@@ -455,7 +407,7 @@ fn block_level_annotated_bindings_parse_and_run() {
 #[test]
 fn block_level_annotated_binding_wrong_type_is_a_type_error() {
     // A block-level annotation must be enforced just like a top-level one.
-    assert_check_err("^ = () -> Num => <\n  x :: Text = 5\n  0\n>");
+    assert_type_error("^ = () -> Num => <\n  x :: Text = 5\n  0\n>");
 }
 
 // --- Ad-hoc overloading: exact-type dispatch over an overload set. ---
@@ -485,7 +437,7 @@ fn run_operator_overload_on_user_type() {
 fn comparison_operator_overload_must_return_bool() {
     // A comparison/equality operator overload is a predicate — a non-Bool return type
     // is a compile error. (Arithmetic operators have no such constraint.)
-    assert_check_err("V = { x :: Num }\n== = (a :: V, b :: V) -> V => a\n^ = () -> Num => 0");
+    assert_type_error("V = { x :: Num }\n== = (a :: V, b :: V) -> V => a\n^ = () -> Num => 0");
 }
 
 #[test]
@@ -719,7 +671,7 @@ fn user_print_overload_is_added_not_shadowed() {
 #[test]
 fn no_matching_overload_is_a_compile_error() {
     // No `pick` overload accepts a Bool (exact-match, no coercion).
-    assert_check_err(
+    assert_type_error(
         "pick = (n :: Num) -> Num => n\npick = (s :: Text) -> Num => s.size\n^ = () -> Num => pick(true)",
     );
 }
@@ -727,7 +679,7 @@ fn no_matching_overload_is_a_compile_error() {
 #[test]
 fn duplicate_overload_signature_is_a_compile_error() {
     // Two definitions with the SAME parameter types make every call ambiguous.
-    assert_check_err(
+    assert_type_error(
         "pick = (n :: Num) -> Num => n\npick = (m :: Num) -> Num => m + 1\n^ = () -> Num => pick(1)",
     );
 }
@@ -735,7 +687,7 @@ fn duplicate_overload_signature_is_a_compile_error() {
 #[test]
 fn operator_with_no_overload_for_operand_types_is_a_compile_error() {
     // `+` has Num/Num and Text/Text overloads but none for Num + Bool.
-    assert_check_err("^ = () -> Num => 1 + true");
+    assert_type_error("^ = () -> Num => 1 + true");
 }
 
 // --- Entry-point `^` receiving `args :: []Text` and `env :: [][]Text`. ---

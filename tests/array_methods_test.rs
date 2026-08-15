@@ -5,49 +5,12 @@
 // (`Ok(elem)` / `NotOk`). These tests drive the full pipeline (lex -> parse ->
 // typecheck -> codegen -> JIT) and assert the real exit code.
 
-use quilon::jit;
-use quilon::lexer::Lexer;
-use quilon::parser;
-use quilon::typechecker::TypeChecker;
-use std::sync::Mutex;
-
-// LLVM JIT / target init isn't thread-safe; cargo runs tests in parallel.
-static JIT_LOCK: Mutex<()> = Mutex::new(());
-
-fn assert_exit(src: &str, expected: i32) {
-    let _guard = JIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-
-    let tokens = Lexer::tokenize(src).expect("lexing failed");
-    let program = parser::parse(&tokens).expect("parsing failed");
-    let mut checker = TypeChecker::new();
-    checker
-        .check_program(&program)
-        .expect("type checking failed");
-
-    let code = jit::run_program(&program, &["program".to_string()]).expect("execution failed");
-    assert_eq!(code, expected, "unexpected exit code for source:\n{}", src);
-}
-
-/// A source that should FAIL the front-end (lex/parse/typecheck).
-fn assert_rejected(src: &str) {
-    let tokens = match Lexer::tokenize(src) {
-        Ok(t) => t,
-        Err(_) => return,
-    };
-    let program = match parser::parse(&tokens) {
-        Ok(p) => p,
-        Err(_) => return,
-    };
-    let mut checker = TypeChecker::new();
-    assert!(
-        checker.check_program(&program).is_err(),
-        "expected the front-end to reject:\n{src}"
-    );
-}
-
 // ---- map ----------------------------------------------------------------
 
 /// `map` produces a new array; sum the doubled elements via reduce. [1,2,3] -> [2,4,6] -> 12.
+mod common;
+use common::{assert_exit, assert_type_error};
+
 #[test]
 fn map_doubles_elements() {
     assert_exit(
@@ -203,13 +166,13 @@ fn array_method_reserved_over_user_definition() {
 /// A `filter` predicate that doesn't return `Bool` is rejected.
 #[test]
 fn filter_predicate_must_be_bool() {
-    assert_rejected("^ = () -> Num => <\n  [1, 2, 3].filter(x => x + 1).size\n>");
+    assert_type_error("^ = () -> Num => <\n  [1, 2, 3].filter(x => x + 1).size\n>");
 }
 
 /// `at` requires a `Num` index.
 #[test]
 fn at_index_must_be_num() {
-    assert_rejected("^ = () -> Num => <\n  [1, 2, 3].at(\"oops\")\n>");
+    assert_type_error("^ = () -> Num => <\n  [1, 2, 3].at(\"oops\")\n>");
 }
 
 /// A lambda passed somewhere other than a built-in array method (here, to `print`)
@@ -217,5 +180,5 @@ fn at_index_must_be_num() {
 /// higher-order arguments elsewhere (here `print` has no function-typed overload).
 #[test]
 fn bare_lambda_is_not_a_value() {
-    assert_rejected("<< core.io\n^ = () -> Num => <\n  print(x => x)\n  0\n>");
+    assert_type_error("<< core.io\n^ = () -> Num => <\n  print(x => x)\n  0\n>");
 }

@@ -6,13 +6,11 @@ use inkwell::context::Context;
 use quilon::ast::{Expr, InterpPart};
 use quilon::codegen::CodeGenerator;
 use quilon::lexer::{Lexer, StrChunk, TokenKind};
-use quilon::parser::{self, parse};
+use quilon::parser::parse;
 use quilon::typechecker::TypeChecker;
-use std::path::Path;
-use std::sync::Mutex;
 
-// LLVM JIT / target init is not thread-safe; cargo runs tests in parallel.
-static JIT_LOCK: Mutex<()> = Mutex::new(());
+mod common;
+use common::{assert_exit, assert_exit_linked};
 
 // ---- lexer -------------------------------------------------------------------------
 
@@ -132,33 +130,6 @@ fn codegen_emits_render_intrinsics_for_holes() {
 }
 
 // ---- run (JIT) ---------------------------------------------------------------------
-
-/// Compile and run `src`, asserting the entry point yields `expected`.
-fn assert_exit(src: &str, expected: i32) {
-    let _guard = JIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    let tokens = Lexer::tokenize(src).expect("lexing failed");
-    let program = parser::parse(&tokens).expect("parsing failed");
-    TypeChecker::new()
-        .check_program(&program)
-        .expect("type checking failed");
-    let code =
-        quilon::jit::run_program(&program, &["program".to_string()]).expect("execution failed");
-    assert_eq!(code, expected, "unexpected exit code for:\n{src}");
-}
-
-/// As `assert_exit`, but resolves `<<` imports first (for programs using `core.io`).
-fn assert_exit_linked(src: &str, expected: i32) {
-    let _guard = JIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    let tokens = Lexer::tokenize(src).expect("lexing failed");
-    let program = parser::parse(&tokens).expect("parsing failed");
-    let program = quilon::modules::link(program, Path::new(".")).expect("import linking failed");
-    TypeChecker::new()
-        .check_program(&program)
-        .expect("type checking failed");
-    let code =
-        quilon::jit::run_program(&program, &["program".to_string()]).expect("execution failed");
-    assert_eq!(code, expected, "unexpected exit code for:\n{src}");
-}
 
 /// A program that exits 1 iff the interpolation `interp` renders exactly to `expected`.
 fn assert_renders(interp: &str, expected: &str) {

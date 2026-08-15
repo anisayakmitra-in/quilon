@@ -2,18 +2,14 @@
 //! indexOf/slice/toUpper/toLower). Drives the full pipeline (lex -> parse -> typecheck
 //! -> codegen -> JIT) and asserts the program's real exit code, mirroring `run_test.rs`.
 
-use quilon::jit;
-use quilon::lexer::Lexer;
-use quilon::parser;
-use quilon::typechecker::TypeChecker;
 use std::process::Command;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-// LLVM JIT / native-target init isn't thread-safe; serialize execution.
-static JIT_LOCK: Mutex<()> = Mutex::new(());
-
 // Unique suffix for temp files across parallel subprocess crash tests.
+
+mod common;
+use common::{assert_exit, assert_type_error};
+
 static CRASH_SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// Run `src` via `quilon run` in a SUBPROCESS and assert it aborts with exit code 101
@@ -42,29 +38,6 @@ fn assert_run_aborts(src: &str, expect_stderr: &str) {
         "stderr {stderr:?} missing {expect_stderr:?} for source:\n{src}"
     );
     let _ = std::fs::remove_dir_all(&dir);
-}
-
-/// Compile and run `src`, asserting the entry point yields `expected`.
-fn assert_exit(src: &str, expected: i32) {
-    let _guard = JIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    let tokens = Lexer::tokenize(src).expect("lexing failed");
-    let program = parser::parse(&tokens).expect("parsing failed");
-    TypeChecker::new()
-        .check_program(&program)
-        .expect("type checking failed");
-    let code = jit::run_program(&program, &["program".to_string()]).expect("execution failed");
-    assert_eq!(code, expected, "unexpected exit code for source:\n{}", src);
-}
-
-/// Assert `src` fails to type-check (a negative test).
-fn assert_type_error(src: &str) {
-    let tokens = Lexer::tokenize(src).expect("lexing failed");
-    let program = parser::parse(&tokens).expect("parsing failed");
-    assert!(
-        TypeChecker::new().check_program(&program).is_err(),
-        "expected a type error for source:\n{}",
-        src
-    );
 }
 
 // ---- split ----------------------------------------------------------------

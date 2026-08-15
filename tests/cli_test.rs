@@ -7,31 +7,16 @@
 //! assert calls `__exit`, which would abort the in-process test runner. The self-asserting
 //! end-to-end example lives at `examples/cli.ql`, exercised by the examples gate.)
 
-use quilon::jit;
 use quilon::lexer::Lexer;
 use quilon::modules;
 use quilon::parser;
 use quilon::typechecker::TypeChecker;
 use std::path::Path;
-use std::sync::Mutex;
-
-// LLVM JIT / native-target init isn't thread-safe; serialize execution.
-static JIT_LOCK: Mutex<()> = Mutex::new(());
-
-/// Lex -> parse -> link imports -> typecheck -> JIT-run `src`, asserting its exit code.
-fn assert_exit(src: &str, expected: i32) {
-    let _guard = JIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    let tokens = Lexer::tokenize(src).expect("lexing failed");
-    let program = parser::parse(&tokens).expect("parsing failed");
-    let linked = modules::link(program, Path::new(".")).expect("import linking failed");
-    TypeChecker::new()
-        .check_program(&linked)
-        .expect("type checking failed");
-    let code = jit::run_program(&linked, &["program".to_string()]).expect("execution failed");
-    assert_eq!(code, expected, "unexpected exit code for source:\n{}", src);
-}
 
 // ---- getEnv --------------------------------------------------------------------------
+
+mod common;
+use common::assert_exit_linked;
 
 #[test]
 fn get_env_found_and_missing() {
@@ -45,7 +30,7 @@ fn get_env_found_and_missing() {
           hit * 10 + miss
         >
     "#;
-    assert_exit(src, 31);
+    assert_exit_linked(src, 31);
 }
 
 #[test]
@@ -61,7 +46,7 @@ fn get_env_matches_key_not_value() {
         >
     "#;
     // "VAL".size = 3 (byKey), byVal miss = 1 -> 31.
-    assert_exit(src, 31);
+    assert_exit_linked(src, 31);
 }
 
 #[test]
@@ -77,7 +62,7 @@ fn get_env_empty_value_is_present() {
         >
     "#;
     // present 1, "".size 0 -> 10.
-    assert_exit(src, 10);
+    assert_exit_linked(src, 10);
 }
 
 // ---- hasFlag -------------------------------------------------------------------------
@@ -99,7 +84,7 @@ fn has_flag_with_and_without_dashes() {
         >
     "#;
     // a,b,c = 1; d,e = 0 -> 16 + 8 + 4 = 28.
-    assert_exit(src, 28);
+    assert_exit_linked(src, 28);
 }
 
 // ---- getOpt --------------------------------------------------------------------------
@@ -117,7 +102,7 @@ fn get_opt_collects_space_and_equals_forms() {
         >
     "#;
     // size 2, "a".size 1, "bb".size 2 -> 212.
-    assert_exit(src, 212);
+    assert_exit_linked(src, 212);
 }
 
 #[test]
@@ -136,7 +121,7 @@ fn get_opt_name_with_or_without_dashes() {
         >
     "#;
     // both find "zz": sameSize 1, sameVal 1, va.size 1 -> 100 + 10 + 1 = 111.
-    assert_exit(src, 111);
+    assert_exit_linked(src, 111);
 }
 
 #[test]
@@ -152,7 +137,7 @@ fn get_opt_equals_form_empty_value() {
         >
     "#;
     // size 1, "".size 0 -> 10.
-    assert_exit(src, 10);
+    assert_exit_linked(src, 10);
 }
 
 #[test]
@@ -167,7 +152,7 @@ fn get_opt_absent_is_not_ok_with_name() {
         >
     "#;
     // "zzz".size = 3.
-    assert_exit(src, 3);
+    assert_exit_linked(src, 3);
 }
 
 #[test]
@@ -183,7 +168,7 @@ fn get_opt_skips_argv0() {
         >
     "#;
     // size 1, "real".size 4 -> 14.
-    assert_exit(src, 14);
+    assert_exit_linked(src, 14);
 }
 
 #[test]
@@ -198,7 +183,7 @@ fn get_opt_trailing_flag_with_no_value_is_not_ok() {
         >
     "#;
     // NotOk("out") -> "out".size = 3.
-    assert_exit(src, 3);
+    assert_exit_linked(src, 3);
 }
 
 // ---- import wiring -------------------------------------------------------------------

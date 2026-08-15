@@ -10,10 +10,9 @@ use quilon::typechecker::TypeChecker;
 use quilon::{jit, modules};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Mutex;
 
-// LLVM JIT / target init isn't thread-safe; cargo runs tests in parallel.
-static JIT_LOCK: Mutex<()> = Mutex::new(());
+mod common;
+use common::JIT_LOCK;
 
 fn examples_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("examples")
