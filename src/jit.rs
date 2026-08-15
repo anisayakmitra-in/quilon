@@ -24,7 +24,7 @@ type MainFn = unsafe extern "C" fn(i32, *const *const c_char, *const *const c_ch
 /// are responsible for building it the same way the OS builds a native binary's
 /// argv: for `quilon run <file> [user args...]`, `main.rs` passes
 /// `[<file>, <user args...>]` so the JIT mirrors `./<file> <user args...>` and
-/// never leaks the `quilon run` CLI prefix (issue #44).
+/// never leaks the `quilon run` CLI prefix.
 ///
 /// Returns the value the program's `^` entry point yields, as an `i32` exit
 /// code. Libc symbols the generated code may reference (e.g. `printf`,
@@ -152,7 +152,7 @@ pub fn run_program(program: &Program, args: &[String]) -> Result<i32, String> {
     //
     // `argv` comes from the caller-supplied `args` (not `std::env::args()`), so a
     // JIT'd program sees exactly the argument vector a native build would — with no
-    // `quilon run` CLI prefix leaked in (issue #44). `envp` still comes from the
+    // `quilon run` CLI prefix leaked in. `envp` still comes from the
     // process environment, matching what the OS hands a native binary.
     let arg_cstrings: Vec<CString> = args
         .iter()

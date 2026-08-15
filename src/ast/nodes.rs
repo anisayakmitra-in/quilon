@@ -52,8 +52,6 @@ pub enum TypeDef {
         fields: Vec<(String, Type)>,
         methods: Vec<MethodDecl>,
     },
-    #[allow(dead_code)]
-    Alias(Type),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -298,16 +296,6 @@ pub enum Expr {
         span: Span,
     },
 
-    // Sum type constructor call (e.g., Some(42), OK("value"), NotOK).
-    // Reserved AST surface: constructor calls currently flow through `Call`, so this
-    // variant is matched-but-not-yet-built. Kept for the planned dedicated lowering.
-    #[allow(dead_code)]
-    SumConstructor {
-        variant: String,
-        args: Vec<Expr>,
-        span: Span,
-    },
-
     // Inclusive range `lo <- hi`: materialized `[]Num` sugar. `1 <- 4` is
     // `[1, 2, 3, 4]`; when `lo > hi` it descends (`4 <- 1` is `[4, 3, 2, 1]`).
     // There is no distinct Range type — the result IS a `[]Num`, so it composes
@@ -353,7 +341,6 @@ impl Expr {
             Expr::Array { span, .. } => span,
             Expr::Record { span, .. } => span,
             Expr::Constructor { span, .. } => span,
-            Expr::SumConstructor { span, .. } => span,
             Expr::Range { span, .. } => span,
             Expr::Spread { span, .. } => span,
         }

@@ -221,7 +221,7 @@ pub fn build_native(
         .status()
         .map_err(|e| match e.kind() {
             // Name the missing binary instead of a bare "No such file or
-            // directory (os error 2)" (issue #38 bonus).
+            // directory (os error 2)".
             std::io::ErrorKind::NotFound => format!(
                 "linker `{linker}` not found on PATH. Install it, or pass \
                  `--linker <name>` (e.g. `--linker gcc`)."

@@ -113,7 +113,7 @@ fn main() {
             // trailing args. This keeps `quilon run f.ql a b c` and `./f a b c`
             // in agreement on `^`'s `args` — same `args.size` and same trailing
             // arguments (argv[0] is the `.ql` path rather than the binary path).
-            // Fixes the JIT leaking the `quilon run` CLI prefix (issue #44).
+            // Keeps the JIT from leaking the `quilon run` CLI prefix.
             let mut argv = Vec::with_capacity(args.len() + 1);
             argv.push(file.to_string_lossy().into_owned());
             argv.extend(args);

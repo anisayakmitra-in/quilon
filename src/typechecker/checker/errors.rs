@@ -1,0 +1,183 @@
+//! How a type error reports itself: the source span it points at, and the message the
+//! CLI renders. The `TypeError` enum itself lives in `super`, beside the checker that
+//! raises it.
+
+use super::*;
+
+impl TypeError {
+    /// The source span this error refers to, for diagnostic rendering.
+    pub fn span(&self) -> &Span {
+        match self {
+            TypeError::UndefinedVariable { span, .. }
+            | TypeError::TypeMismatch { span, .. }
+            | TypeError::NotAFunction { span, .. }
+            | TypeError::WrongNumberOfArguments { span, .. }
+            | TypeError::ImmutableAssignment { span, .. }
+            | TypeError::ImmutableFieldWrite { span, .. }
+            | TypeError::MutatingMethodOnImmutable { span, .. }
+            | TypeError::DuplicateDefinition { span, .. }
+            | TypeError::NoMatchingOverload { span, .. }
+            | TypeError::AmbiguousOverload { span, .. }
+            | TypeError::OverloadMissingAnnotation { span, .. }
+            | TypeError::OverloadCallBeforeDefinition { span, .. }
+            | TypeError::UnannotatedOverloadCall { span, .. }
+            | TypeError::UnannotatedOverloadMember { span, .. }
+            | TypeError::ComparisonOverloadNotBool { span, .. }
+            | TypeError::RefutableConstructorArg { span, .. }
+            | TypeError::NonExhaustiveMatch { span }
+            | TypeError::InvalidEntryPointSignature { span, .. }
+            | TypeError::InvalidBuiltinArgument { span, .. } => span,
+        }
+    }
+}
+
+impl std::fmt::Display for TypeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            TypeError::UndefinedVariable { name, .. } => {
+                write!(f, "Undefined variable '{}'", name)
+            }
+            TypeError::TypeMismatch { expected, got, .. } => {
+                write!(f, "Type mismatch: expected {:?}, got {:?}", expected, got)
+            }
+            TypeError::NotAFunction { got, .. } => {
+                write!(f, "Not a function: got {:?}", got)
+            }
+            TypeError::WrongNumberOfArguments { expected, got, .. } => {
+                write!(
+                    f,
+                    "Wrong number of arguments: expected {}, got {}",
+                    expected, got
+                )
+            }
+            TypeError::ImmutableAssignment { name, .. } => {
+                write!(f, "Cannot assign to immutable variable '{}'", name)
+            }
+            TypeError::ImmutableFieldWrite { name, .. } => {
+                write!(
+                    f,
+                    "Cannot write to a field of immutable '{}'; bind it with ':=' to allow in-place mutation",
+                    name
+                )
+            }
+            TypeError::MutatingMethodOnImmutable {
+                method, receiver, ..
+            } => {
+                write!(
+                    f,
+                    "Cannot call mutating method '{}' on immutable '{}'; bind it with ':=' to allow in-place mutation",
+                    method, receiver
+                )
+            }
+            TypeError::DuplicateDefinition { name, .. } => {
+                write!(f, "Duplicate definition of '{}'", name)
+            }
+            TypeError::NoMatchingOverload {
+                name,
+                arg_types,
+                candidates,
+                ..
+            } => {
+                write!(
+                    f,
+                    "No overload of '{}' matches argument types ({}). Candidates: {}",
+                    name,
+                    fmt_type_list(arg_types),
+                    fmt_candidates(candidates),
+                )
+            }
+            TypeError::AmbiguousOverload {
+                name,
+                arg_types,
+                candidates,
+                ..
+            } => {
+                write!(
+                    f,
+                    "Ambiguous call to '{}' with argument types ({}); multiple overloads match: {}",
+                    name,
+                    fmt_type_list(arg_types),
+                    fmt_candidates(candidates),
+                )
+            }
+            TypeError::OverloadMissingAnnotation { name, param, .. } => {
+                write!(
+                    f,
+                    "Overloaded definition '{}' must annotate every parameter; '{}' has no type annotation",
+                    name, param
+                )
+            }
+            TypeError::OverloadCallBeforeDefinition { name, .. } => {
+                write!(
+                    f,
+                    "cannot call '{}' before its definition — Quilon resolves names top to bottom; move the definition above this call",
+                    name
+                )
+            }
+            TypeError::UnannotatedOverloadCall { name, params, .. } => {
+                write!(
+                    f,
+                    "cannot call '{}': its overload member ({}) has no return type annotation — annotate it, since exact dispatch needs the full signature",
+                    name,
+                    fmt_type_list(params)
+                )
+            }
+            TypeError::UnannotatedOverloadMember { name, params, .. } => {
+                write!(
+                    f,
+                    "overload member '{}' ({}) has no return type annotation — annotate it, since exact dispatch needs the full signature",
+                    name,
+                    fmt_type_list(params)
+                )
+            }
+            TypeError::ComparisonOverloadNotBool { operator, got, .. } => {
+                write!(
+                    f,
+                    "comparison operator '{}' overload must return Bool, found {}",
+                    operator,
+                    type_label(got)
+                )
+            }
+            TypeError::RefutableConstructorArg { constructor, .. } => {
+                write!(
+                    f,
+                    "Unsupported pattern: an argument of '{}(…)' must be a binding or '_' \
+                     — a literal or nested constructor here would silently match ANY \
+                     payload. Bind the payload and compare it in the arm body instead.",
+                    constructor
+                )
+            }
+            TypeError::NonExhaustiveMatch { .. } => {
+                write!(f, "Non-exhaustive pattern match")
+            }
+            TypeError::InvalidEntryPointSignature { got, .. } => {
+                write!(
+                    f,
+                    "Entry point '^' has an unsupported signature ({}). Valid signatures: \
+                     '()', '(args :: []Text)', '(args :: []Text, env :: [][]Text)' \
+                     (or legacy '(argc :: Num, argv :: Num)').",
+                    fmt_type_list(got)
+                )
+            }
+            TypeError::InvalidBuiltinArgument { message, .. } => {
+                write!(f, "{}", message)
+            }
+        }
+    }
+}
+
+/// Render a comma-separated parameter/argument type list (`Num, Text`).
+pub(super) fn fmt_type_list(types: &[Type]) -> String {
+    types.iter().map(type_label).collect::<Vec<_>>().join(", ")
+}
+
+/// Render candidate signatures for an overload diagnostic (`(Num, Num), (Text, Text)`).
+pub(super) fn fmt_candidates(candidates: &[Vec<Type>]) -> String {
+    candidates
+        .iter()
+        .map(|params| format!("({})", fmt_type_list(params)))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+impl std::error::Error for TypeError {}
