@@ -368,6 +368,23 @@ Color = Red / Green / Blue
         "Color's payload must sit at byte offset 8, got:\n{color}"
     );
 
+    // `Result` has ONE canonical `{ptr,i64}` payload slot (16 bytes) into which any payload
+    // is packed, so its tagged-struct is `{ i8 tag, {ptr,i64} payload }` = 24 bytes (0x18)
+    // with the payload at byte offset 8 — matching the uniform LLVM Result value.
+    let result = out
+        .split("DW_AT_name\t(\"Result\")")
+        .nth(1)
+        .expect("Result struct in the dump");
+    let result = &result[..result.find("DW_TAG_structure_type").unwrap_or(result.len())];
+    assert!(
+        result.contains("DW_AT_byte_size\t(0x18)"),
+        "Result should be 24 bytes ({{ i8 tag, {{ptr,i64}} payload }}), got:\n{result}"
+    );
+    assert!(
+        result.contains("DW_AT_data_member_location\t(0x08)"),
+        "Result's payload slot must sit at byte offset 8, got:\n{result}"
+    );
+
     let _ = std::fs::remove_dir_all(&dir);
 }
 

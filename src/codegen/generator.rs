@@ -132,9 +132,11 @@ pub struct CodeGenerator<'ctx> {
     // the widest variant so EVERY value of the type has the same struct shape
     // `{ i8 tag, slot0, slot1, ... }`. This lets a match arm extract any variant's
     // payload slots without going out of range, even when the runtime value was built
-    // from a narrower variant. Keyed by sum-type name. Only USER sum types are entered
-    // here; the predefined `Result` is intentionally absent (its generic, heterogeneous
-    // payloads are sized per-value at construction — see `register_builtin_sum_types`).
+    // from a narrower variant. Keyed by sum-type name. USER sum types are entered here
+    // as they're declared; the predefined `Result` is entered up front with a SINGLE
+    // canonical `{ptr,i64}` payload slot (see `register_builtin_sum_types`) so that
+    // every Result — whatever its `Ok`/`NotOk` payload — shares one LLVM shape
+    // `{ i8, {ptr,i64} }` and can cross a generic `(r :: Result)` boundary.
     sum_layouts: HashMap<String, Vec<BasicTypeEnum<'ctx>>>,
     current_function: Option<FunctionValue<'ctx>>,
     // Names of `:=` (mutable) locals in the CURRENT function that are captured by
@@ -326,18 +328,24 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
 
     /// Register the predefined `Result` variants: `Ok` is tag 0, `NotOk` is tag 1.
-    /// Unlike user sum types, Result is NOT given a fixed payload layout: its variants
-    /// have generic payloads (`Ok(T)` / `NotOk(E)`) whose concrete type is only known at
-    /// each construction site, and the two variants routinely carry DIFFERENT payload
-    /// types (e.g. `Ok(num)` vs `NotOk(text)`). So a Result value is sized to its
-    /// actual payload at construction (`generate_sum_constructor`'s no-registered-layout
-    /// path), preserving the historical per-value representation
-    /// (`Ok(42) -> { i8, double }`, `NotOk("e") -> { i8, ptr }`).
+    /// Result's payloads are generic (`Ok(T)` / `NotOk(E)`) and its two variants routinely
+    /// carry DIFFERENT concrete types (e.g. `Ok(num)` vs `NotOk(text)`), so Result is given
+    /// ONE canonical payload slot of type `{ptr,i64}` — wide enough to hold any payload —
+    /// making every Result the single LLVM shape `{ i8 tag, {ptr,i64} slot }`. A scalar
+    /// payload is PACKED into that slot at construction (`pack_result_payload`) and UNPACKED
+    /// back to its concrete type at a match binding (`unpack_result_payload`); a Text/array
+    /// payload is already `{ptr,i64}` and fills the slot directly. This uniform shape is what
+    /// lets a Result carrying any payload cross a generic `(r :: Result)` param/return.
     fn register_builtin_sum_types(&mut self) {
         self.sum_variants
             .insert("Ok".to_string(), (0u8, "Result".to_string()));
         self.sum_variants
             .insert("NotOk".to_string(), (1u8, "Result".to_string()));
+        // The single canonical payload slot: a `{ptr,i64}` big enough for any payload.
+        self.sum_layouts.insert(
+            "Result".to_string(),
+            vec![self.ptr_len_struct_type().into()],
+        );
         // Result's payloads are generic (`Ok(T)` / `NotOk(E)`); a `Generic` binding
         // resolves as Num for overload dispatch (see the type checker's `types_match`).
         let generic = |n: &str| Type::Generic {
