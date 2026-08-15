@@ -41,6 +41,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                 Ok(text.into())
             }
 
+            Expr::Interpolation { parts, .. } => self.generate_interpolation(parts),
+
             Expr::Bool { value, .. } => Ok(self
                 .context
                 .bool_type()
@@ -101,7 +103,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 cond, then, else_, ..
             } => self.generate_if(cond, then, else_),
 
-            Expr::Block { stmts, .. } => self.generate_block(stmts),
+            Expr::Block { stmts, span } => self.generate_block(stmts, span),
 
             Expr::Array { elements, .. } => self.generate_array(expr, elements),
 
@@ -535,7 +537,11 @@ impl<'ctx> CodeGenerator<'ctx> {
     pub(super) fn generate_block(
         &mut self,
         stmts: &[crate::ast::Statement],
+        span: &Span,
     ) -> Result<BasicValueEnum<'ctx>, String> {
+        // Under `--debug`, a `{ }` block introduces a nested lexical scope so its locals nest
+        // under a `DW_TAG_lexical_block` rather than the function directly (a no-op otherwise).
+        let saved_scope = self.begin_di_lexical_block(span);
         let mut result = self.context.f64_type().const_float(0.0).into();
 
         for stmt in stmts {
@@ -549,6 +555,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
         }
 
+        self.end_di_scope(saved_scope);
         Ok(result)
     }
 

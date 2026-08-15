@@ -1,7 +1,6 @@
-//! Symbol mangling for overload members.
-//!
-//! Each overload member is emitted under a distinct symbol built from its parameter
-//! types, so a call mangles to the same name the definition did.
+//! Symbol mangling: the distinct LLVM symbol each overload member and method is
+//! emitted under, built from its name and parameter types so a call site mangles to
+//! the same symbol the definition did.
 
 use super::*;
 
@@ -60,6 +59,19 @@ pub(super) fn mangle_overload(name: &str, params: &[Type]) -> String {
         s.push_str(&type_mangle(p));
     }
     s
+}
+
+/// The LLVM symbol for a record method `Type.method`. The render operator `` ` `` is not a
+/// valid identifier, so it is spelled out (`Type_op$backtick`); every other method name is
+/// used verbatim. Shared by method declaration, body emission, and call dispatch so all
+/// three always agree.
+pub(super) fn method_symbol(type_name: &str, method_name: &str) -> String {
+    let m = if method_name == "`" {
+        "op$backtick"
+    } else {
+        method_name
+    };
+    format!("{}_{}", type_name, m)
 }
 
 /// A pronounceable word for an operator symbol, for use in a mangled LLVM name (which

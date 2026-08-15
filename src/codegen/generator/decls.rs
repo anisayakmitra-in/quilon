@@ -13,12 +13,18 @@ impl<'ctx> CodeGenerator<'ctx> {
             self.named_type_fields
                 .insert(decl.name.clone(), field_names.clone());
 
+            // Record which types override the render operator `` ` ``, so a render site
+            // dispatches to the override instead of the built-in (type-name) default.
+            if methods.iter().any(|m| m.name == "`") {
+                self.render_overrides.insert(decl.name.clone());
+            }
+
             let ptr_type = self.context.ptr_type(AddressSpace::default());
 
             // Pass 1: declare every method signature first, so a method body may reference
             // sibling methods (or recurse) regardless of declaration order.
             for method in methods {
-                let mangled = format!("{}_{}", decl.name, method.name);
+                let mangled = method_symbol(&decl.name, &method.name);
                 if self.module.get_function(&mangled).is_some() {
                     continue;
                 }
@@ -59,12 +65,18 @@ impl<'ctx> CodeGenerator<'ctx> {
         field_names: &[String],
         method: &MethodDecl,
     ) -> Result<(), String> {
-        let mangled = format!("{}_{}", type_name, method.name);
+        let mangled = method_symbol(type_name, &method.name);
         let function = self
             .module
             .get_function(&mangled)
             .ok_or_else(|| format!("Method function not declared: {}", mangled))?;
         self.current_function = Some(function);
+        // Rendering the receiver `it` wholesale inside the type's own `` ` `` override must
+        // use the built-in default, not re-invoke the override — else it recurses forever.
+        let prev_backtick = self.generating_backtick_for.take();
+        if method.name == "`" {
+            self.generating_backtick_for = Some(type_name.to_string());
+        }
         let saved_scope = self.begin_di_function(function, &method.name, &method.span);
 
         let entry = self.context.append_basic_block(function, "entry");
@@ -88,6 +100,15 @@ impl<'ctx> CodeGenerator<'ctx> {
             .insert("it".to_string(), field_names.to_vec());
         self.var_named_types
             .insert("it".to_string(), type_name.to_string());
+        // `it` is the record receiver (parameter #1); build its type only when debug is on.
+        if self.debug.is_some() {
+            let it_qty = Type::Named {
+                name: type_name.to_string(),
+                fields: vec![],
+                methods: vec![],
+            };
+            self.declare_variable("it", it_alloca, &it_qty, &method.span, Some(1));
+        }
 
         // Remaining params follow the receiver.
         for (i, param) in method.params.iter().enumerate() {
@@ -100,6 +121,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                 .map_err(ctx("Failed to build store"))?;
             self.variables
                 .insert(param.name.clone(), (alloca, param_type));
+            self.declare_variable(
+                &param.name,
+                alloca,
+                param.type_annotation.as_ref().unwrap_or(&Type::Num),
+                &param.span,
+                Some((i + 2) as u32),
+            );
         }
 
         let body_value = self.generate_expr(&method.body)?;
@@ -107,6 +135,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             .build_return(Some(&body_value))
             .map_err(ctx("Failed to build return"))?;
 
+        self.generating_backtick_for = prev_backtick;
         self.end_di_scope(saved_scope);
         Ok(())
     }
@@ -209,6 +238,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                 .build_store(slot, value)
                 .map_err(ctx("Failed to build store"))?;
             self.variables.insert(decl.name.clone(), (slot, var_type));
+            // The binding's Quilon type is the one just recorded in `var_types` — borrow it
+            // rather than keeping a separate clone alive across the whole binding.
+            if let Some(qty) = self.var_types.get(&decl.name) {
+                self.declare_variable(&decl.name, slot, qty, &decl.span, None);
+            }
         } else {
             // Global variable
             let global =
@@ -363,6 +397,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     self.record_types.insert(param.name.clone(), fields.clone());
                 }
             }
+            self.declare_variable(&param.name, alloca, &qty, &param.span, Some((i + 1) as u32));
             self.var_types.insert(param.name.clone(), qty);
         }
 

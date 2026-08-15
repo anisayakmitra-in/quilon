@@ -44,12 +44,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                 .fn_type(&[ptr.into(), i64t.into(), ptr.into(), i64t.into()], false),
             // i64 __write_bytes(i64 fd, i8* ptr, i64 len) — raw write, backs `write`.
             "__write_bytes" => i64t.fn_type(&[i64t.into(), ptr.into(), i64t.into()], false),
-            // void __print_num_fd(i64 fd, double) — number + newline to fd.
-            "__print_num_fd" => void.fn_type(&[i64t.into(), f64t.into()], false),
-            // void __print_bool_fd(i64 fd, i64 b) — "true"/"false" + newline to fd.
-            "__print_bool_fd" => void.fn_type(&[i64t.into(), i64t.into()], false),
             // void __print_text_fd(i64 fd, i8*) — C string + newline to fd.
             "__print_text_fd" => void.fn_type(&[i64t.into(), ptr.into()], false),
+            // { ptr, i64 } __num_to_text(double) — render a Num (integer-valued without
+            // decimals, else shortest round-trip). Backs the built-in `` ` `` for Num.
+            "__num_to_text" => self.ptr_len_struct_type().fn_type(&[f64t.into()], false),
+            // { ptr, i64 } __bool_to_text(i64) — render a Bool as "True"/"False". Backs the
+            // built-in `` ` `` for Bool (capitalized, unlike the `true`/`false` literals).
+            "__bool_to_text" => self.ptr_len_struct_type().fn_type(&[i64t.into()], false),
             // { ptr, i64 } __argv_to_text_array(i64 argc, i8** argv) — build a `[]Text`
             // (array of `{ptr,i64}` Text structs) from the C argc/argv. Returns the
             // `[]Text` value struct (same shape as `ptr_len_struct_type`).
@@ -108,11 +110,11 @@ impl<'ctx> CodeGenerator<'ctx> {
         Ok(self.module.add_function(name, fn_type, None))
     }
 
-    /// Lower a `print`/`eprint` builtin call: render the single argument's text
-    /// and write it, followed by a newline, to stdout (`print`, fd 1) or stderr
-    /// (`eprint`, fd 2). Dispatches on the LLVM type of the argument: floats print
-    /// as numbers, Text structs / pointers as C strings, integers (incl. bools)
-    /// widen to numbers. Yields `Num` 0, so it is usable in expression position.
+    /// Lower a `print`/`eprint` builtin call: render the single argument to `Text` through
+    /// its `` ` `` operator (the same render path as string interpolation), then write it —
+    /// followed by a newline — to stdout (`print`, fd 1) or stderr (`eprint`, fd 2). Any
+    /// value is printable because every type has a `` ` `` (built-in default or override).
+    /// Yields `$` (Unit), so it composes in expression position.
     pub(super) fn generate_print(
         &mut self,
         name: &str,
@@ -127,45 +129,15 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
         let fd = if name == "eprint" { 2 } else { 1 };
         let fd_val = self.context.i64_type().const_int(fd, false);
-        let val = self.generate_expr(&args[0])?;
-        let (intrinsic, arg): (&str, inkwell::values::BasicMetadataValueEnum) = match val {
-            BasicValueEnum::FloatValue(f) => ("__print_num_fd", f.into()),
-            // Text is { ptr data, i64 len }; print its NUL-terminated `data`.
-            BasicValueEnum::StructValue(s) => {
-                let data = self
-                    .builder
-                    .build_extract_value(s, 0, "text_data")
-                    .map_err(ctx("Failed to extract text data"))?
-                    .into_pointer_value();
-                ("__print_text_fd", data.into())
-            }
-            // A bare pointer (C string) prints as text.
-            BasicValueEnum::PointerValue(p) => ("__print_text_fd", p.into()),
-            // A Bool (i1) prints as "true"/"false"; any wider int widens to a number.
-            BasicValueEnum::IntValue(i) if i.get_type().get_bit_width() == 1 => {
-                let b = self
-                    .builder
-                    .build_int_z_extend(i, self.context.i64_type(), "bool_ext")
-                    .map_err(ctx("Failed to extend bool for print"))?;
-                ("__print_bool_fd", b.into())
-            }
-            BasicValueEnum::IntValue(i) => {
-                let f = self
-                    .builder
-                    .build_unsigned_int_to_float(i, self.context.f64_type(), "print_num")
-                    .map_err(ctx("Failed to convert int for print"))?;
-                ("__print_num_fd", f.into())
-            }
-            other => {
-                return Err(format!(
-                    "print does not support a value of type {:?}",
-                    other.get_type()
-                ));
-            }
-        };
-        let print_fn = self.get_intrinsic(intrinsic)?;
+        let text = self.render_expr(&args[0])?;
+        let data = self
+            .builder
+            .build_extract_value(text.into_struct_value(), 0, "print_data")
+            .map_err(ctx("Failed to extract render data"))?
+            .into_pointer_value();
+        let print_fn = self.get_intrinsic("__print_text_fd")?;
         self.builder
-            .build_call(print_fn, &[fd_val.into(), arg], "")
+            .build_call(print_fn, &[fd_val.into(), data.into()], "")
             .map_err(ctx("Failed to build print call"))?;
         // `print`/`eprint` yield Unit (`$`); their result is meaningless.
         Ok(self.unit_value().into())

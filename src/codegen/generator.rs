@@ -1,19 +1,20 @@
 // LLVM code generator for Quilon
 
 use crate::ast::{
-    BinOp, Expr, FunctionDecl, Item, MatchArm, MethodDecl, Pattern, Program, Type, TypeDecl,
-    TypeDef, UnaryOp, VarDecl, is_operator_symbol,
+    BinOp, Expr, FunctionDecl, InterpPart, Item, MatchArm, MethodDecl, Pattern, Program, Type,
+    TypeDecl, TypeDef, UnaryOp, VarDecl, is_operator_symbol,
 };
 use crate::codegen::debug::DebugInfo;
 use crate::lexer::Span;
 use inkwell::AddressSpace;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
-use inkwell::debug_info::{AsDIScope, DIScope};
+use inkwell::debug_info::{AsDIScope, DIScope, DIType};
 use inkwell::module::Module;
 use inkwell::types::{BasicType, BasicTypeEnum};
 use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue, PointerValue};
-use std::collections::HashMap;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 
 // The generator's methods live in child modules — one per lowering area — as further
 // `impl<'ctx> CodeGenerator<'ctx>` blocks. Children of this file rather than siblings
@@ -23,7 +24,9 @@ mod arrays;
 mod calls;
 mod closures;
 mod decls;
+mod di;
 mod exprs;
+mod interpolation;
 mod intrinsics;
 mod mangle;
 mod matching;
@@ -35,7 +38,9 @@ mod tco;
 mod tests;
 mod text;
 
-use mangle::{fmt_param_types, is_builtin_overload_name, mangle_overload, type_mangle};
+use mangle::{
+    fmt_param_types, is_builtin_overload_name, mangle_overload, method_symbol, type_mangle,
+};
 use oracle::zeroed;
 
 /// Provenance watermark embedded in every native binary. Lowered as an `!llvm.ident`
@@ -46,7 +51,7 @@ use oracle::zeroed;
 pub const WATERMARK: &str = "Built with Quilon by Assaf Sapir - github.com/assapir/quilon";
 
 /// The failure message for a fallible LLVM builder call: `ctx("build return")` turns the
-/// builder's error into `"build return: <error>"`. Every IR-emitting call in this module
+/// builder's error into `"build return: <error>"`. Every IR-emitting call in the generator
 /// reports failure this way, so the phrasing lives in one place instead of a closure per
 /// call site.
 fn ctx<E: std::fmt::Debug>(what: &'static str) -> impl FnOnce(E) -> String {
@@ -179,6 +184,15 @@ pub struct CodeGenerator<'ctx> {
     // to `loop_header` instead of emitting a stack-growing `call` + `ret` — guaranteeing
     // self-tail-recursion runs in constant stack (see `Tco` / `generate_tail_expr`).
     tco: Option<Tco<'ctx>>,
+    // Named types (records) that define their own `` ` `` render operator override. A
+    // value of such a type renders via the user's `Type_op$backtick` method instead of the
+    // built-in default (type name). Populated once, in the type-declaration pre-pass.
+    render_overrides: std::collections::HashSet<String>,
+    // While emitting the body of a type's own `` ` `` override, this holds that type's
+    // name. Rendering the receiver `it` wholesale (a hole that is literally `it`) then
+    // falls back to the built-in default instead of re-invoking the override — breaking
+    // what would otherwise be unbounded self-recursion at runtime.
+    generating_backtick_for: Option<String>,
     // DWARF line-number debug info, installed only for a `--debug` native build (via
     // [`enable_debug`]). When present, each emitted function gets a `DISubprogram` and every
     // expression sets a source location before lowering, so `llvm-dwarfdump` and debuggers
@@ -196,6 +210,15 @@ pub struct CodeGenerator<'ctx> {
     // Set while emitting an imported-module item, so `begin_di_function`/`set_debug_loc`
     // emit no debug info for it — only the user's own file gets DWARF line info.
     di_suppressed: bool,
+    // DWARF debug types (only under `--debug`). Full field types of every record type
+    // (`named_type_fields` keeps only names), and each sum type's variant list — both needed
+    // to build a composite type's members/payload slots. Populated by a pre-pass in
+    // `generate`, so a type used before its declaration still resolves.
+    record_field_types: HashMap<String, Vec<(String, Type)>>,
+    sum_variant_defs: HashMap<String, Vec<crate::ast::SumVariant>>,
+    // Structural type keys currently being lowered to DWARF, so a (hypothetically) recursive
+    // record/sum breaks the cycle with an opaque pointer instead of recursing forever.
+    di_building: RefCell<HashSet<String>>,
 }
 
 /// The loop-lowering context for self-tail-call optimization of one function. Present
@@ -288,10 +311,15 @@ impl<'ctx> CodeGenerator<'ctx> {
             var_types: HashMap::new(),
             fn_return_types: HashMap::new(),
             tco: None,
+            render_overrides: std::collections::HashSet::new(),
+            generating_backtick_for: None,
             debug: None,
             di_scope: None,
             di_imported_boundary: 0,
             di_suppressed: false,
+            record_field_types: HashMap::new(),
+            sum_variant_defs: HashMap::new(),
+            di_building: RefCell::new(HashSet::new()),
         };
         codegen.register_builtin_sum_types();
         codegen
@@ -363,72 +391,6 @@ impl<'ctx> CodeGenerator<'ctx> {
         self.oracle = TypeOracle::new(table);
     }
 
-    /// Turn on DWARF line-number debug-info emission for this module, using `source`
-    /// (the text compiled from `file_path`) to map span byte offsets to `(line, column)`.
-    /// Only the native `--debug` build path calls this; without it the generator emits no
-    /// debug info at all. `imported_item_count` is how many leading top-level items came from
-    /// imported modules (their spans can't be mapped to this file, so they get no debug
-    /// info). Must be called before [`generate`].
-    pub fn enable_debug(
-        &mut self,
-        file_path: &std::path::Path,
-        source: &str,
-        imported_item_count: usize,
-    ) {
-        self.debug = Some(DebugInfo::new(
-            &self.module,
-            self.context,
-            file_path,
-            source,
-        ));
-        self.di_imported_boundary = imported_item_count;
-    }
-
-    /// Point the builder's current debug location at `span` within the function currently
-    /// being emitted. A no-op unless debug info is on and a function scope is active — so
-    /// call sites need no `if debug` guard of their own.
-    fn set_debug_loc(&self, span: &Span) {
-        if self.di_suppressed {
-            return;
-        }
-        if let (Some(debug), Some(scope)) = (self.debug.as_ref(), self.di_scope) {
-            let loc = debug.location(self.context, span, scope);
-            self.builder.set_current_debug_location(loc);
-        }
-    }
-
-    /// Begin emitting the body of `function` (named `name`, starting at `span`) under debug
-    /// info: create its `DISubprogram`, attach it, and make it the active source scope.
-    /// Returns the previously active scope, which the caller restores via [`end_di_scope`]
-    /// once the body is emitted — so a nested function (closure/local fn) does not leave the
-    /// enclosing function attributed to the wrong subprogram. A no-op (returns `None`) when
-    /// debug info is off.
-    fn begin_di_function(
-        &mut self,
-        function: FunctionValue<'ctx>,
-        name: &str,
-        span: &Span,
-    ) -> Option<DIScope<'ctx>> {
-        let saved = self.di_scope;
-        if self.di_suppressed {
-            return saved;
-        }
-        if let Some(debug) = self.debug.as_ref() {
-            let subprogram = debug.create_function(name, span);
-            function.set_subprogram(subprogram);
-            self.di_scope = Some(subprogram.as_debug_info_scope());
-            // Seed the body's leading instructions (parameter stores, TCO back-edge) with a
-            // location at the function header, before per-expression locations take over.
-            self.set_debug_loc(span);
-        }
-        saved
-    }
-
-    /// Restore the source scope saved by [`begin_di_function`] after a function body is done.
-    fn end_di_scope(&mut self, saved: Option<DIScope<'ctx>>) {
-        self.di_scope = saved;
-    }
-
     pub fn generate(&mut self, program: &Program) -> Result<String, String> {
         // Pre-pass: register all user sum-type variants so constructors and pattern
         // dispatch resolve regardless of declaration order relative to their uses.
@@ -440,6 +402,19 @@ impl<'ctx> CodeGenerator<'ctx> {
             }) = item
             {
                 self.register_sum_variants(name, variants)?;
+            }
+            // Under `--debug` only, keep every record type's full field types (name + type) so
+            // the DWARF builders can build its composite members regardless of declaration order
+            // (`named_type_fields` keeps only names, which is all the non-debug paths need, so
+            // this deep clone is skipped entirely when debug info is off).
+            if self.debug.is_some()
+                && let Item::TypeDecl(TypeDecl {
+                    name,
+                    type_def: TypeDef::Record { fields, .. },
+                    ..
+                }) = item
+            {
+                self.record_field_types.insert(name.clone(), fields.clone());
             }
         }
 
@@ -725,6 +700,12 @@ impl<'ctx> CodeGenerator<'ctx> {
         type_name: &str,
         variants: &[crate::ast::SumVariant],
     ) -> Result<(), String> {
+        // Under `--debug` only, keep the whole variant list so the DWARF builders can build the
+        // sum's payload slots (skipped otherwise — normal codegen sizes sums from `sum_layouts`).
+        if self.debug.is_some() {
+            self.sum_variant_defs
+                .insert(type_name.to_string(), variants.to_vec());
+        }
         for (tag, variant) in variants.iter().enumerate() {
             self.sum_variants
                 .insert(variant.name.clone(), (tag as u8, type_name.to_string()));

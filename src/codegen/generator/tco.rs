@@ -139,7 +139,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
             }
 
-            Expr::Block { stmts, .. } => {
+            Expr::Block { stmts, span } => {
                 // Emit every statement normally except the tail expression, which stays in
                 // tail position. A non-`Expr`-tail block (ends in an item) has no tail call
                 // (the analysis returned false), so generating it whole is correct.
@@ -155,7 +155,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         }
                         self.generate_tail_expr(tail)
                     }
-                    _ => Ok(Some(self.generate_block(stmts)?)),
+                    _ => Ok(Some(self.generate_block(stmts, span)?)),
                 }
             }
 

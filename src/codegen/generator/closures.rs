@@ -174,6 +174,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
             }
             Expr::Spread { expr, .. } => Self::collect_mutable_locals(expr, out),
+            Expr::Interpolation { parts, .. } => {
+                for part in parts {
+                    if let crate::ast::InterpPart::Hole(e) = part {
+                        Self::collect_mutable_locals(e, out);
+                    }
+                }
+            }
             Expr::Number { .. }
             | Expr::String { .. }
             | Expr::Bool { .. }
@@ -294,6 +301,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
             }
             Expr::Spread { expr, .. } => Self::walk_exprs(expr, f),
+            Expr::Interpolation { parts, .. } => {
+                for part in parts {
+                    if let crate::ast::InterpPart::Hole(e) = part {
+                        Self::walk_exprs(e, f);
+                    }
+                }
+            }
             Expr::Number { .. }
             | Expr::String { .. }
             | Expr::Bool { .. }
@@ -521,6 +535,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                 .build_store(alloca, llvm_param)
                 .map_err(ctx("Failed to store param"))?;
             self.variables.insert(param.name.clone(), (alloca, pty));
+            self.declare_variable(
+                &param.name,
+                alloca,
+                param.type_annotation.as_ref().unwrap_or(&Type::Num),
+                &param.span,
+                Some((i + 1) as u32),
+            );
         }
 
         // Re-bind captures from the environment pointer (the trailing parameter).
@@ -544,6 +565,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .into_pointer_value();
                     self.variables
                         .insert(cap.name.clone(), (cell, cap.value_ty));
+                    self.declare_variable(
+                        &cap.name,
+                        cell,
+                        self.var_types.get(&cap.name).unwrap_or(&Type::Num),
+                        body.span(),
+                        None,
+                    );
                 } else {
                     // By-value capture: copy the snapshot into a fresh local slot.
                     let val = self
@@ -556,6 +584,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .map_err(ctx("Failed to store capture value"))?;
                     self.variables
                         .insert(cap.name.clone(), (alloca, cap.value_ty));
+                    self.declare_variable(
+                        &cap.name,
+                        alloca,
+                        self.var_types.get(&cap.name).unwrap_or(&Type::Num),
+                        body.span(),
+                        None,
+                    );
                 }
                 // If the captured value is itself a closure, re-register its signature so
                 // a `name(args)` inside this lifted body resolves to an indirect call (the

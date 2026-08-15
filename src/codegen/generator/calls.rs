@@ -43,13 +43,17 @@ impl<'ctx> CodeGenerator<'ctx> {
         // matches the argument types.
         match func_name.as_str() {
             "print" | "eprint" => {
+                // Any single argument renders through its `` ` `` operator (built-in
+                // default or user override); only an EXACT user overload of `print`/`eprint`
+                // (a different signature) is dispatched as a mangled call below instead. A
+                // function-typed argument is not a renderable value — the type checker
+                // already rejects `print(f)` (see `is_generic_print_call`), so it never
+                // reaches here and this gate needs no separate `Function` exclusion.
                 let arg_types: Vec<Type> = args.iter().map(|a| self.infer_type(a)).collect();
-                let is_builtin_print = arg_types.len() == 1
-                    && matches!(arg_types[0], Type::Num | Type::Text | Type::Bool);
                 let has_user_match = self
                     .resolve_overload_symbol(func_name, &arg_types)
                     .is_some();
-                if is_builtin_print && !has_user_match {
+                if arg_types.len() == 1 && !has_user_match {
                     return self.generate_print(func_name, args);
                 }
             }
@@ -124,7 +128,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     let mangled = args
                         .first()
                         .and_then(|recv| self.receiver_type_name(recv))
-                        .map(|type_name| format!("{}_{}", type_name, func_name));
+                        .map(|type_name| method_symbol(&type_name, func_name));
                     match mangled.and_then(|m| self.module.get_function(&m)) {
                         Some(f) => f,
                         None => return Err(format!("Function not found: {}", func_name)),
