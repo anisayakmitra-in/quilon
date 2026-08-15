@@ -905,6 +905,78 @@ Quilon uses a **conservative garbage collector** (Boehm). Heap values (`Text`, e
 
 ---
 
+## Concurrency — colorless implicit futures (planned)
+
+> **Status: planned (❌ — not yet implemented).** This section records Quilon's locked
+> concurrency model — its core forward-looking design decision and a defining part of the
+> language's identity. The full specification lives in
+> [issue #120](https://github.com/assapir/quilon/issues/120); this is the durable summary.
+
+Quilon's concurrency is **colorless**: you write ordinary, blocking-*looking* code, and the
+runtime overlaps independent IO for you automatically. There is **no** `async`, **no**
+`await`, no `go`/`spawn` operator, no resolve token, and — crucially — **no function
+coloring**: a function that does IO is written and typed exactly like one that doesn't. This
+is more ambitious than Go or Java's Loom (which still need an explicit `go` to start
+concurrent work) and than `async`/`await` (which colors every function on the IO path). The
+nearest precedent is **promise pipelining** (E, Cap'n Proto).
+
+**`@` marks leaf IO primitives only.** The one marker in the whole model is `@`, and it
+appears **only** on the leaf IO primitives that live in the stdlib/runtime — an `http.get`,
+a file read, a socket recv, `sleep`. **All user code is unmarked.** A function that
+transitively calls an `@` primitive is concurrency-capable *for free*, with **no
+propagation** up the call chain — that absence of propagation is exactly why the model is
+colorless.
+
+**Deferred values.** Calling an `@` primitive launches the IO and **returns immediately**
+with a *deferred* value; it does **not** park the caller. Deferred-ness then **propagates as
+the value flows** — passed as an argument, stored in a record or array, returned from a
+function — without forcing anything along the way. That lazy threading is the *pipelining*.
+
+**Forcing happens at the leaves.** A deferred value is **forced** — the fiber parks until
+the value is actually ready — only at a **strict** operation: the built-in primitives that
+must read the concrete bytes. Those are arithmetic, comparison, pattern match (`?`), IO
+output (`print` / `write`), and native calls. Pure threading of a value stays lazy; forcing
+happens only where a real byte is finally needed. Independent values that are *launched
+before they are forced* therefore **overlap automatically** — implicit concurrency, with
+nothing written to ask for it.
+
+**Deferral is type-invisible.** A deferred `Text` still *types* as `Text` — deferral is an
+internal runtime detail, not part of the type — so it does **not** disturb the exact-type
+[overload resolution](#overloading): a deferred `Text` dispatches exactly as an ordinary
+`Text` would.
+
+**Structured & scoped.** Deferred tasks are scoped to their enclosing `< >` block: the
+block **forces and joins** every task it launched before it returns, and a panic propagates
+out of the scope.
+
+**Why it can be colorless.** Each fiber is **stackful** (via `corosensei`): it has a real
+call stack, so *any* function can park at a force point without the compiler rewriting it
+into a state machine. That is what removes coloring entirely — nothing needs an `async`
+signature to be allowed to suspend.
+
+**Determinism.** *Pure* results are fully deterministic. The **ordering of side effects**
+across independent deferred IO is **unspecified** — an accepted tradeoff for getting the
+overlap implicitly.
+
+```quilon
+~ `@get` is a leaf IO primitive (stdlib/runtime) — the ONLY marked thing here.
+~ `fetchJson` is ordinary, unmarked user code, yet concurrency-capable for free:
+fetchJson = (url :: Text) -> Text => @get(url)   ~ launches IO, returns a deferred Text
+
+loadDashboard = (user :: Text) -> Text => <
+  profile = fetchJson("/users/" + user)     ~ launches fetch #1, returns immediately
+  orders  = fetchJson("/orders/" + user)    ~ launches fetch #2 — overlaps fetch #1
+  render(profile, orders)                    ~ each forced at a strict op inside render (block joins)
+>
+```
+
+Both fetches are in flight at once because neither is forced until `render` reads them; the
+enclosing `< >` block joins them before returning. Note that `fetchJson` and `loadDashboard`
+carry no marker, no `async`, no `await` — only the leaf `@get` is marked. See
+[issue #120](https://github.com/assapir/quilon/issues/120) for the full specification.
+
+---
+
 ## Compiling & running
 
 ```bash
@@ -1023,6 +1095,7 @@ pathological input.
 | Overloaded name passed as a value, or a closure as a param / return (higher-order) | ❌ |
 | Generic / polymorphic-capturing closures | ❌ |
 | String interpolation | ❌ |
+| [Colorless implicit-futures concurrency](#concurrency--colorless-implicit-futures-planned) — `@` leaf IO primitives, deferred values, force-at-strict-op (planned; [#120](https://github.com/assapir/quilon/issues/120)) | ❌ |
 
 ---
 
@@ -1037,6 +1110,7 @@ pathological input.
 - A `Text` value bound from an `args`/`env` element supports the full `Text` API
   (`.size`/`.length`/`+`/comparison), and — like a bound `Result` payload — dispatches an
   [overload set](#overloading) by its concrete `Text` type.
+- **No concurrency runtime yet.** The [colorless implicit-futures model](#concurrency--colorless-implicit-futures-planned) is a locked *design* ([#120](https://github.com/assapir/quilon/issues/120)), not an implemented feature: `@` primitives, deferred values, fibers, and the reactor are still to be built (the core deliverable on the road to 1.0).
 
 ---
 
