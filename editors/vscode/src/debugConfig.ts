@@ -27,6 +27,27 @@ export function splitCommand(command: string): { exe: string; baseArgs: string[]
   return { exe, baseArgs };
 }
 
+/**
+ * Refuses a second debug build for a source file while the first is still in
+ * flight. `tryAcquire` returns false when `key` is already held; always
+ * `release` it in a `finally` so the flag can never wedge.
+ */
+export class InFlightBuilds {
+  private readonly active = new Set<string>();
+
+  tryAcquire(key: string): boolean {
+    if (this.active.has(key)) {
+      return false;
+    }
+    this.active.add(key);
+    return true;
+  }
+
+  release(key: string): void {
+    this.active.delete(key);
+  }
+}
+
 /** The first non-blank line of `output`, trimmed — used to distill a one-line reason from compiler stderr. */
 export function firstNonEmptyLine(output: string): string | undefined {
   return output
@@ -89,6 +110,9 @@ export function toLldbConfiguration(input: LldbConfigInput): Record<string, unkn
     program: input.program,
     args: input.args ?? [],
     cwd: input.cwd ?? "${workspaceFolder}",
+    // Route program I/O to the shared Debug Console rather than a per-session
+    // integrated terminal, so terminals don't pile up run after run.
+    terminal: "console",
   };
   if (input.formatterPath !== undefined && input.formatterPath.length > 0) {
     // Load the Quilon value formatters into the lldb session before the target

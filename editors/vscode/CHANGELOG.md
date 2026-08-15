@@ -17,10 +17,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **▶ Debug CodeLens** above every `^` entry point, next to **▶ Run**, plus a
   **Quilon: Debug Current File** command and a contributed default `launch.json`
   configuration.
-- **lldb value formatters (scaffold)** in `formatters/quilon.py`, imported into
-  the debug session. Rich rendering of Quilon values (Text, arrays, records, sum
-  variants) is pending distinct DWARF types from the compiler's debug-types
-  work; the formatter's type bindings activate once those types land.
+- **lldb value formatters** in `formatters/quilon.py`, imported into the debug
+  session. A `Text` renders as its string and a `[]T` expands to an indexed list
+  of its elements (each keeping its own type, so `[][]Text` nests), with a
+  size-aware summary and a cap on element expansion. Records and sum types fall
+  back to lldb's default rendering for now.
+- **Debug build progress** — starting a debug session now shows a
+  "building … for debug" notification while `quilon build --debug` runs, so the
+  otherwise-silent build gives visible feedback. A second ▶ Debug for the same
+  file is refused while its build is still in flight, so an impatient re-click
+  can't kick off a duplicate build.
+- **Debug output reuse** — debug sessions send the program's output to the
+  shared Debug Console instead of spawning a fresh integrated terminal each run,
+  so terminals no longer accumulate across sessions.
 
 ## [0.9.1] - 2026-08-10
 
