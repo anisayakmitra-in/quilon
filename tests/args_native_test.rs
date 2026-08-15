@@ -99,11 +99,11 @@ fn native_args_size_reflects_passed_argv() {
 
 #[test]
 fn jit_and_aot_argv_agree() {
-    // Regression for issue #44: `quilon run f.ql a b c` must give `^`'s `args` the same
-    // shape a native `./f a b c` gets — `[<file>, a, b, c]` — instead of leaking the
-    // `quilon run` CLI prefix. Drive BOTH paths through the actual binary and assert
-    // they agree on `args.size` for the same trailing user args, including a leading
-    // `--flag` (which must pass THROUGH to the program, not be parsed by quilon).
+    // `quilon run f.ql a b c` must give `^`'s `args` the same shape a native
+    // `./f a b c` gets — `[<file>, a, b, c]` — instead of leaking the `quilon run` CLI
+    // prefix. Drive BOTH paths through the actual binary and assert they agree on
+    // `args.size` for the same trailing user args, including a leading `--flag` (which
+    // must pass THROUGH to the program, not be parsed by quilon).
     let quilon = env!("CARGO_BIN_EXE_quilon");
     let bin = std::env::temp_dir().join(format!("quilon_argv_parity_{}", std::process::id()));
     let src = "^ = (args :: []Text) -> Num => args.size";

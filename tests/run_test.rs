@@ -777,7 +777,7 @@ fn run_entry_indexes_into_args() {
 #[test]
 fn jit_uses_caller_supplied_argv() {
     // The JIT must thread the caller-supplied argv into `^`'s `args` verbatim — no
-    // `quilon run <file>` CLI prefix leaked in (issue #44). A program returning
+    // `quilon run <file>` CLI prefix leaked in. A program returning
     // `args.size` therefore returns exactly the length of the slice we pass, so this
     // is the JIT-side anchor for JIT/AOT argv parity: `run_program(&p, &[file, a, b, c])`
     // must equal a native `./file a b c` (which sees `args.size == 4`).
