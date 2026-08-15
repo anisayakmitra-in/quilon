@@ -1,0 +1,114 @@
+//! Written types: `Num`, `[]T`, named types, and the sum-type alternatives after `/`.
+//!
+//! Part of the recursive-descent parser; see `super` for the `Parser` cursor these
+//! methods run against.
+
+use super::*;
+
+impl<'a> Parser<'a> {
+    /// Depth-guarded entry point for type parsing. Type syntax recurses independently
+    /// of the expression grammar (`[]T` element types), so it needs the same
+    /// `MAX_NESTING_DEPTH` bound to keep `[][]…[]T` from overflowing the stack.
+    pub(super) fn parse_type(&mut self) -> Result<crate::ast::Type, ParseError> {
+        self.nested(Self::parse_type_inner)
+    }
+
+    pub(super) fn parse_type_inner(&mut self) -> Result<crate::ast::Type, ParseError> {
+        let token = self.peek();
+
+        // `$` in type position is the Unit type (e.g. `-> $`). Matched on the token
+        // kind rather than its text since `$` is a dedicated token, not an identifier.
+        if token.kind == TokenKind::Unit {
+            self.advance();
+            return Ok(crate::ast::Type::Unit);
+        }
+
+        // `[]T` — an array type (e.g. `[]Text`, and nested `[][]Text`). The `[]` prefix
+        // wraps the element type that follows, so `[][]Text` parses as
+        // `Array(Array(Text))` via the recursive `parse_type` call.
+        if token.kind == TokenKind::BracketOpen {
+            self.advance();
+            self.expect(&TokenKind::BracketClose)?;
+            let elem = self.parse_type()?;
+            return Ok(crate::ast::Type::Array(Box::new(elem)));
+        }
+
+        match token.text.as_str() {
+            "Num" => {
+                self.advance();
+                Ok(crate::ast::Type::Num)
+            }
+            "Text" => {
+                self.advance();
+                Ok(crate::ast::Type::Text)
+            }
+            "Bool" => {
+                self.advance();
+                Ok(crate::ast::Type::Bool)
+            }
+            "Result" => {
+                self.advance();
+                // Optional generic args, e.g. `Result{T, E}` — consumed and
+                // ignored for now (the builtin Result is monomorphic in codegen).
+                if self.check(&TokenKind::BraceOpen) {
+                    let mut depth = 0usize;
+                    loop {
+                        if self.check(&TokenKind::BraceOpen) {
+                            depth += 1;
+                            self.advance();
+                        } else if self.check(&TokenKind::BraceClose) {
+                            self.advance();
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
+                        } else if self.is_at_end() {
+                            break;
+                        } else {
+                            self.advance();
+                        }
+                    }
+                }
+                // Must match `add_builtins` in the type checker exactly so that a
+                // declared `-> Result` is equal to an inferred `Ok(..)`/`NotOk(..)`
+                // body type under `check_type_compatibility`.
+                Ok(crate::ast::Type::Sum {
+                    name: "Result".to_string(),
+                    variants: vec![
+                        crate::ast::SumVariant {
+                            name: "Ok".to_string(),
+                            fields: vec![crate::ast::Type::Generic {
+                                name: "T".to_string(),
+                                args: vec![],
+                            }],
+                        },
+                        crate::ast::SumVariant {
+                            name: "NotOk".to_string(),
+                            fields: vec![crate::ast::Type::Generic {
+                                name: "E".to_string(),
+                                args: vec![],
+                            }],
+                        },
+                    ],
+                })
+            }
+            // Any other Capitalized identifier is a reference to a user-defined type
+            // (e.g. a sum type `Color`/`Shape`). The type checker resolves it by name
+            // against the registered types. Emitted as a `Named` reference with no
+            // fields; the checker replaces it with the concrete definition.
+            other if is_capitalized(other) => {
+                let name = other.to_string();
+                self.advance();
+                Ok(crate::ast::Type::Named {
+                    name,
+                    fields: vec![],
+                    methods: vec![],
+                })
+            }
+            _ => Err(ParseError {
+                message: format!("Expected type, got {:?}", token.kind),
+                span: token.span.clone(),
+            }),
+        }
+    }
+}
