@@ -71,3 +71,19 @@ jobs:
 
       - name: Test
         run: cargo test --verbose
+
+      # Informational only: no threshold, no gate. Shared runners are too noisy for
+      # absolute limits, so the numbers are published for trend tracking and a ratio
+      # tripwire is a later decision once there is history to set it from.
+      - name: Compile-speed benchmark
+        run: |
+          set -euo pipefail
+          cargo bench --bench compile_speed | tee bench-output.txt
+          {
+            echo "### Compile-speed benchmark"
+            echo
+            echo "Informational — no pass/fail. Shared-runner numbers are noisy in"
+            echo "absolute terms; watch the trend across commits."
+            echo
+            sed -n '/^| corpus/,/^$/p' bench-output.txt
+          } >> "$GITHUB_STEP_SUMMARY"
