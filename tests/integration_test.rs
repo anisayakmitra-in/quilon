@@ -35,13 +35,15 @@ fn test_all_features_integration() {
 
     // Type check
     let mut checker = TypeChecker::new();
-    assert!(checker.check_program(&program).is_ok());
+    let types = checker
+        .check_program(&program)
+        .expect("type checking failed");
 
-    // Generate code. Array methods (`.each`) need the type oracle populated, so
-    // build the generator via `with_oracle` (the real compilation path).
+    // Generate code. Array methods (`.each`) need the type oracle populated, so hand
+    // codegen the table the check just produced — the real compilation path.
     let context = Context::create();
-    let mut generator = CodeGenerator::with_oracle(&context, "integration_test", &program)
-        .expect("oracle setup failed");
+    let mut generator = CodeGenerator::new(&context, "integration_test");
+    generator.set_type_table(types);
     let result = generator.generate(&program);
     assert!(result.is_ok(), "Codegen failed: {:?}", result.err());
 }

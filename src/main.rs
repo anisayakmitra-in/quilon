@@ -55,23 +55,11 @@ enum Commands {
 }
 
 /// Run the shared front-end (read → lex → parse → resolve imports → type-check),
-/// printing the diagnostic and exiting on any failure.
-fn checked_program(file: &Path) -> ast::Program {
+/// printing the diagnostic and exiting on any failure. The result carries the type
+/// table the check produced, which codegen consumes instead of checking again.
+fn checked(file: &Path) -> driver::Checked {
     match driver::front_end(file) {
-        Ok(program) => program,
-        Err(e) => {
-            eprintln!("{}", e);
-            std::process::exit(1);
-        }
-    }
-}
-
-/// Like [`checked_program`], but also returns the source text and the count of leading
-/// imported-module items, for a `--debug` native build (see [`driver::front_end_detailed`]).
-/// Shares the same print-and-exit handling so the two paths cannot drift.
-fn checked_program_detailed(file: &Path) -> (ast::Program, String, usize) {
-    match driver::front_end_detailed(file) {
-        Ok(triple) => triple,
+        Ok(checked) => checked,
         Err(e) => {
             eprintln!("{}", e);
             std::process::exit(1);
@@ -95,8 +83,8 @@ fn main() {
 
     match cli.command {
         Commands::Run { file, args } => {
-            let program = checked_program(&file);
-            require_entry_point(&program);
+            let checked = checked(&file);
+            require_entry_point(&checked.program);
 
             // Mirror the argv a native build receives: `argv[0]` is the program
             // (here, the `.ql` file path as typed), followed by the user's
@@ -110,7 +98,7 @@ fn main() {
 
             // JIT-compile and execute in-process; the entry point's value
             // becomes the program's exit code.
-            match jit::run_program(&program, &argv) {
+            match jit::run_program(&checked.program, checked.types, &argv) {
                 Ok(code) => std::process::exit(code),
                 Err(e) => {
                     eprintln!("❌ Runtime error: {}", e);
@@ -121,21 +109,16 @@ fn main() {
         Commands::Compile { file, output } => {
             println!("🔨 Compiling: {}", file.display());
 
-            let program = checked_program(&file);
+            let checked = checked(&file);
+            let program = checked.program;
             println!("✅ Type checking passed!");
             require_entry_point(&program);
 
             // Generate LLVM IR
             use inkwell::context::Context;
             let context = Context::create();
-            let mut generator =
-                match codegen::CodeGenerator::with_oracle(&context, "main", &program) {
-                    Ok(g) => g,
-                    Err(e) => {
-                        eprintln!("❌ Code generation error: {}", e);
-                        std::process::exit(1);
-                    }
-                };
+            let mut generator = codegen::CodeGenerator::new(&context, "main");
+            generator.set_type_table(checked.types);
 
             let ir = match generator.generate(&program) {
                 Ok(ir) => ir,
@@ -178,12 +161,9 @@ fn main() {
             // A `--debug` build also needs the source text (to map span byte offsets to
             // `.ql` line/column) and the import boundary (so only the user's own functions
             // get DWARF line info); the detailed front-end returns both alongside the program.
-            let (program, debug_meta) = if debug {
-                let (program, source, imported) = checked_program_detailed(&file);
-                (program, Some((source, imported)))
-            } else {
-                (checked_program(&file), None)
-            };
+            let checked = checked(&file);
+            let debug_meta = debug.then_some((checked.source, checked.imported_items));
+            let program = checked.program;
             require_entry_point(&program);
 
             // Default the output to the source name without its `.ql` extension.
@@ -197,7 +177,13 @@ fn main() {
                     imported_items: *imported,
                 });
 
-            match build::build_native(&program, &out, &linker, debug_source.as_ref()) {
+            match build::build_native(
+                &program,
+                checked.types,
+                &out,
+                &linker,
+                debug_source.as_ref(),
+            ) {
                 Ok(()) => println!("✅ Built native executable: {}", out.display()),
                 Err(e) => {
                     eprintln!("❌ Build error: {}", e);
@@ -208,7 +194,7 @@ fn main() {
         Commands::Check { file } => {
             println!("🔍 Checking: {}", file.display());
 
-            let program = checked_program(&file);
+            let program = checked(&file).program;
             println!("✅ Type checking passed!");
             println!(
                 "📋 Program contains {} top-level item(s)",
