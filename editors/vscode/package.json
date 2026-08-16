@@ -2,8 +2,9 @@
   "name": "quilon",
   "displayName": "Quilon",
   "description": "Syntax highlighting and editor tasks for the Quilon programming language (.ql).",
-  "version": "0.1.0",
-  "publisher": "quilon",
+  "version": "0.9.1",
+  "publisher": "assapir",
+  "icon": "icon.png",
   "license": "GPL-2.0-only",
   "packageManager": "pnpm@11.20.0",
   "repository": {
@@ -14,8 +15,15 @@
   "engines": {
     "vscode": "^1.75.0"
   },
+  "activationEvents": [
+    "onLanguage:quilon"
+  ],
   "categories": [
-    "Programming Languages"
+    "Programming Languages",
+    "Debuggers"
+  ],
+  "extensionDependencies": [
+    "vadimcn.vscode-lldb"
   ],
   "keywords": [
     "quilon",
@@ -53,7 +61,11 @@
         "extensions": [
           ".ql"
         ],
-        "configuration": "./language-configuration.json"
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./icons/ql-light.png",
+          "dark": "./icons/ql-dark.png"
+        }
       }
     ],
     "grammars": [
@@ -71,11 +83,70 @@
       {
         "command": "quilon.run",
         "title": "Quilon: Run Current File"
+      },
+      {
+        "command": "quilon.debug",
+        "title": "Quilon: Debug Current File"
       }
     ],
     "taskDefinitions": [
       {
         "type": "quilon"
+      }
+    ],
+    "breakpoints": [
+      {
+        "language": "quilon"
+      }
+    ],
+    "debuggers": [
+      {
+        "type": "quilon",
+        "label": "Quilon",
+        "languages": [
+          "quilon"
+        ],
+        "configurationAttributes": {
+          "launch": {
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "Path to the .ql file to build with debug info and launch. Defaults to the active file.",
+                "default": "${file}"
+              },
+              "args": {
+                "type": "array",
+                "description": "Arguments passed to the program (available via the entry point's args).",
+                "items": {
+                  "type": "string"
+                },
+                "default": []
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "quilon",
+            "request": "launch",
+            "name": "Quilon: Debug current file",
+            "program": "${file}",
+            "args": []
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "Quilon: Debug current file",
+            "description": "Build the active .ql with debug info and debug it under CodeLLDB.",
+            "body": {
+              "type": "quilon",
+              "request": "launch",
+              "name": "Quilon: Debug current file",
+              "program": "^\"\\${file}\"",
+              "args": []
+            }
+          }
+        ]
       }
     ],
     "configuration": {

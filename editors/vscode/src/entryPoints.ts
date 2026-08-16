@@ -4,8 +4,8 @@
 // In Quilon the program entry point is a top-level function named `^`, e.g.
 //   ^ = () -> Num => < … >
 //   ^ :: () -> Num
-// The CodeLens provider uses this to place "▶ Run" / "Check" actions above each
-// such definition.
+// The CodeLens provider uses this to place a "▶ Run" action above each such
+// definition.
 
 /** A located entry-point definition: the 0-based line it starts on, and the
  *  0-based column of the `^` token (after any leading whitespace). */

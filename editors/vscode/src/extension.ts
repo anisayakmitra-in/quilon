@@ -9,11 +9,13 @@
 
 import { execFile } from "node:child_process";
 import * as vscode from "vscode";
+import { registerDebug } from "./debug";
+import { firstNonEmptyLine, splitCommand } from "./debugConfig";
 import { parseDiagnostics, type ParsedDiagnostic } from "./diagnostics";
 import { findEntryPoints } from "./entryPoints";
 
-/** Read the configured compiler invocation (default `quilon`). */
-function quilonCommand(): string {
+/** Read the configured compiler invocation (default `quilon`). Shared with the debug integration. */
+export function quilonCommand(): string {
   return vscode.workspace.getConfiguration("quilon").get<string>("command", "quilon");
 }
 
@@ -40,21 +42,6 @@ function runOnActiveFile(subcommand: string): void {
 }
 
 // --- Inline diagnostics ----------------------------------------------------
-
-/**
- * Split the `quilon.command` setting into an executable plus leading arguments,
- * so a value like `cargo run --` runs `cargo` with `["run", "--", ...]`. A
- * simple whitespace split is sufficient: paths with spaces should be configured
- * via PATH or a wrapper rather than embedded here.
- */
-function splitCommand(command: string): { exe: string; baseArgs: string[] } {
-  const trimmed = command.trim();
-  if (trimmed.length === 0) {
-    return { exe: "quilon", baseArgs: [] };
-  }
-  const [exe = "quilon", ...baseArgs] = trimmed.split(/\s+/);
-  return { exe, baseArgs };
-}
 
 /**
  * True once we've warned that the compiler is missing, so we don't spam. Reset
@@ -182,11 +169,7 @@ function checkDocument(
  * into a located error, so the user still sees that the check failed.
  */
 function unparsedFailureDiagnostic(output: string): vscode.Diagnostic {
-  const detail =
-    output
-      .split(/\r?\n/)
-      .find((l) => l.trim().length > 0)
-      ?.trim() ?? "unknown error";
+  const detail = firstNonEmptyLine(output) ?? "unknown error";
   const diagnostic = new vscode.Diagnostic(
     new vscode.Range(0, 0, 0, 0),
     `Quilon check failed: ${detail}`,
@@ -196,14 +179,15 @@ function unparsedFailureDiagnostic(output: string): vscode.Diagnostic {
   return diagnostic;
 }
 
-// --- CodeLens: Run / Check above each `^` entry point ----------------------
+// --- CodeLens: Run above each `^` entry point ------------------------------
 
 /**
- * Places "▶ Run" and "Check" actions above every top-level `^` entry-point
- * definition. Both invoke the existing `quilon.run` / `quilon.check` commands,
- * which act on the active editor — and since the lens lives in that document,
- * clicking it (which focuses the doc) targets the right file without needing to
- * thread the URI through.
+ * Places "▶ Run" and "▶ Debug" actions above every top-level `^` entry-point
+ * definition. They invoke the `quilon.run` / `quilon.debug` commands, which act
+ * on the active editor — and since the lenses live in that document, clicking
+ * one (which focuses the doc) targets the right file without threading the URI
+ * through. Debug builds the file with `--debug` and launches it under CodeLLDB
+ * so breakpoints in the `.ql` source are hit.
  */
 class EntryPointCodeLensProvider implements vscode.CodeLensProvider {
   provideCodeLenses(document: vscode.TextDocument): vscode.CodeLens[] {
@@ -217,9 +201,9 @@ class EntryPointCodeLensProvider implements vscode.CodeLensProvider {
           tooltip: "Run this Quilon program",
         }),
         new vscode.CodeLens(range, {
-          title: "Check",
-          command: "quilon.check",
-          tooltip: "Type-check this Quilon program",
+          title: "▶ Debug",
+          command: "quilon.debug",
+          tooltip: "Debug this Quilon program (breakpoints, stepping)",
         }),
       );
     }
@@ -232,6 +216,10 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(diagnostics);
 
   const check = (document: vscode.TextDocument): void => checkDocument(document, diagnostics);
+
+  // Debug integration (CodeLLDB): the `quilon.debug` command and the `quilon`
+  // debug-configuration provider that builds with `--debug` and launches lldb.
+  registerDebug(context);
 
   context.subscriptions.push(
     vscode.commands.registerCommand("quilon.check", () => runOnActiveFile("check")),

@@ -26,10 +26,13 @@ compiles to native code via LLVM. Files use the `.ql` extension.
     (`Ok`, `NotOk`, `Color`, `Circle`); **lowercase** names followed by `(` as function calls.
 - **Bracket matching & auto-closing** for `< >`, `{ }`, `[ ]`, `( )`, and `"`.
 - **Inline diagnostics** — type/parse/lex errors from the compiler appear as
-  editor squiggles (see [Diagnostics & debugging](#diagnostics--debugging)).
+  editor squiggles (see [Diagnostics](#diagnostics)).
 - **Editor tasks & commands** to run the compiler on the active file.
-- **CodeLens** — **▶ Run** and **Check** actions appear above each `^`
+- **CodeLens** — **▶ Run** and **▶ Debug** actions appear above each `^`
   entry-point definition (see [Running the compiler](#running-the-compiler-from-the-editor)).
+- **Debugging** — set breakpoints in `.ql` source and step through a native
+  build under [CodeLLDB](https://marketplace.visualstudio.com/items?itemName=vadimcn.vscode-lldb)
+  (see [Debugging](#debugging)).
 
 ## Install / run locally
 
@@ -137,18 +140,17 @@ Every executable Quilon program defines a top-level `^` entry point (its
 actions:
 
 - **▶ Run** — invokes **Quilon: Run Current File** (`quilon run <file>`).
-- **Check** — invokes **Quilon: Check Current File** (`quilon check <file>`).
+- **▶ Debug** — builds the file with `quilon build --debug` and launches it
+  under CodeLLDB, so breakpoints set in the `.ql` source are hit (see
+  [Debugging](#debugging)).
 
-Both act on the file containing the lens. There is intentionally **no "Debug"
-lens**: Quilon has no debugger yet (step debugging needs DWARF debug info the
-compiler does not emit), so a dead button would only mislead — see
-[Diagnostics & debugging](#diagnostics--debugging).
+Both act on the file containing the lens.
 
 > The `quilon run` subcommand must exist in your toolchain. Depending on your
 > build it may instead be `compile` + manual `llc`/link — see the repo's
 > `CLAUDE.md` / `LANGUAGE.md`.
 
-## Diagnostics & debugging
+## Diagnostics
 
 - **Inline diagnostics (squiggles).** When you open or save a `.ql` file, the
   extension runs `<quilon.command> check <file>` in the background and surfaces
@@ -160,10 +162,41 @@ compiler does not emit), so a dead button would only mislead — see
   file checks clean. If the configured command can't be found, the extension
   warns **once** (set `quilon.command`, e.g. to `cargo run --`) and stays quiet
   thereafter.
-- **No step debugging.** Real breakpoint/step debugging requires DWARF debug
-  info, which the Quilon compiler does not emit yet — so this extension does
-  **not** ship a debug adapter. The `.vscode/launch.json` contains only a
-  trivial run-only configuration. A proper debugger is a future feature.
+
+## Debugging
+
+Source-level debugging is delegated to [**CodeLLDB**](https://marketplace.visualstudio.com/items?itemName=vadimcn.vscode-lldb),
+declared as an extension dependency so VS Code installs it alongside Quilon.
+
+The `quilon` debug type does two things when a session starts:
+
+1. Builds the active `.ql` with `<quilon.command> build --debug <file> -o <tmp>`,
+   which emits DWARF line info into the native binary.
+2. Launches that binary under CodeLLDB (`type: "lldb"`).
+
+Because the binary's DWARF line table references the `.ql` source, breakpoints
+you set in the source and single-stepping both work. Start a session with the
+**▶ Debug** CodeLens above `^`, the **Quilon: Debug Current File** command, or a
+`launch.json` entry:
+
+```jsonc
+{
+  "type": "quilon",
+  "request": "launch",
+  "name": "Quilon: Debug current file",
+  "program": "${file}",
+  "args": []
+}
+```
+
+**Value inspection.** The lldb formatter the session loads
+(`formatters/quilon.py`) renders Quilon values against the distinct DWARF types
+the compiler emits: a `Text` shows as its string (not a `{data, byte_len}`
+struct), and a `[]T` expands to an indexed list of its elements, each keeping its
+own type — so a `[][]Text` expands to a list of inner `[]Text` arrays, each of
+its own `Text` values. Long arrays cap the default expansion and note the
+remaining count in the summary (an explicit `arr[i]` past the cap still works).
+Records and sum types currently fall back to lldb's default struct rendering.
 
 ## Publishing
 
