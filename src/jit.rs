@@ -7,6 +7,7 @@
 
 use crate::ast::Program;
 use crate::codegen::CodeGenerator;
+use crate::typechecker::TypeTable;
 use inkwell::OptimizationLevel;
 use inkwell::context::Context;
 use inkwell::execution_engine::JitFunction;
@@ -31,7 +32,7 @@ type MainFn = unsafe extern "C" fn(i32, *const *const c_char, *const *const c_ch
 /// `malloc`, `memcpy`) resolve automatically from the host process. Custom
 /// runtime intrinsics added by later workstreams (e.g. `__text_length`,
 /// Boehm GC) are registered at the extension point noted below.
-pub fn run_program(program: &Program, args: &[String]) -> Result<i32, String> {
+pub fn run_program(program: &Program, types: TypeTable, args: &[String]) -> Result<i32, String> {
     // LLVM requires the native target to be initialized before a JIT engine
     // can be created.
     Target::initialize_native(&InitializationConfig::default())
@@ -40,7 +41,8 @@ pub fn run_program(program: &Program, args: &[String]) -> Result<i32, String> {
     let context = Context::create();
     // Build the generator with the type oracle installed (so read sites recover precise
     // element/field/match-result types instead of assuming f64).
-    let mut generator = CodeGenerator::with_oracle(&context, "main", program)?;
+    let mut generator = CodeGenerator::new(&context, "main");
+    generator.set_type_table(types);
 
     // Populate, verify, and emit the module (also builds the `main` wrapper).
     generator.generate(program)?;

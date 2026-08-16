@@ -364,34 +364,10 @@ impl<'ctx> CodeGenerator<'ctx> {
         &self.module
     }
 
-    /// Construct a generator with its **type oracle** already installed.
-    ///
-    /// Real compilation paths (`quilon run`/`compile`/`build`) reach codegen with a
-    /// `program` that already passed the front-end type check (in `driver::front_end`),
-    /// but that check's `TypeTable` isn't threaded down to here — so we re-derive it by
-    /// type-checking once more and harvesting the table. The re-check is deliberate: it
-    /// keeps every codegen entry point (CLI, JIT, tests) oracle-backed through one call
-    /// without each caller having to carry the table, and `check_program` is a pure
-    /// function of the AST, so the second run cannot disagree with the first. (If the
-    /// double pass ever shows up in compile-time profiles, the fix is to have
-    /// `front_end` return its table and feed it via [`set_type_table`].) A failure here
-    /// would mean codegen was handed an unchecked program — surfaced as an internal error.
-    pub fn with_oracle(
-        context: &'ctx Context,
-        module_name: &str,
-        program: &Program,
-    ) -> Result<Self, String> {
-        let table = crate::typechecker::TypeChecker::new()
-            .check_program(program)
-            .map_err(|e| format!("internal: type check failed before codegen: {e}"))?;
-        let mut codegen = Self::new(context, module_name);
-        codegen.set_type_table(table);
-        Ok(codegen)
-    }
-
-    /// Install the **type oracle** (the type checker's per-expression `TypeTable`) that
-    /// codegen consults at read sites to recover precise element/field/match-result
-    /// types. The companion to [`with_oracle`] for callers that already hold a table.
+    /// Install the **type oracle**: the per-expression `TypeTable` the type checker
+    /// already produced, which codegen consults at read sites to recover precise
+    /// element/field/match-result types. Every real compilation path hands over the
+    /// table from the front end's check, so the program is type-checked exactly once.
     /// Without it the oracle is empty, every lookup misses, and read sites fall back to
     /// their historical `f64` assumption — which is what the IR-only codegen tests (no
     /// typecheck pass) rely on.

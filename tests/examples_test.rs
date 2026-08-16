@@ -93,8 +93,8 @@ fn runnable_examples_exit_zero() {
     let _guard = JIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     for path in runnable_examples() {
         let name = path.file_name().unwrap().to_string_lossy().to_string();
-        let program = front_end(&path).unwrap_or_else(|e| panic!("{name} failed to compile: {e}"));
-        let code = jit::run_program(&program, &["program".to_string()])
+        let checked = front_end(&path).unwrap_or_else(|e| panic!("{name} failed to compile: {e}"));
+        let code = jit::run_program(&checked.program, checked.types, &["program".to_string()])
             .unwrap_or_else(|e| panic!("{name} failed to run: {e}"));
         assert_eq!(code, 0, "{name}: self-asserting example did not exit 0");
     }
