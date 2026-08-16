@@ -17,20 +17,26 @@ cargo build              # debug build
 cargo build --release    # release build (binary at target/release/quilon)
 cargo test               # full suite (lexer, parser, checker, codegen, module, run, sum)
 cargo test test_name     # a single test by name
-cargo bench              # compile-speed benchmark: per-phase timings over generated corpora
+cargo bench              # both benchmark families (compile speed, and generated-code speed + latency)
 cargo test --test run_test   # one test file (e.g. the JIT exit-code tests)
 ```
 
 Requires **LLVM 22** (for `inkwell`) and the system's **dynamic `libgc`** (Boehm GC) installed; CI installs `llvm-22-dev libpolly-22-dev libgc-dev`. (A static/vendored GC is a post-0.9 goal.)
 
-The benchmark compiles the **committed** corpora in `benches/corpus/` — those bytes are
-the input, so every run measures the same programs — and prints a table (lex / parse /
-link / check / codegen / total, per corpus), asserting nothing. CI publishes it to the
-job summary, so a regression shows up as a column growing over time. `cargo bench --
---regen` rewrites the corpus files from the generators in the bench; resizing a corpus is
-a deliberate act that lands as a reviewable diff and breaks comparability with earlier
-numbers, which is why it is not automatic. Add a corpus when a change has a cost profile
-the existing four don't cover.
+Two families, both reading **committed** corpora so every run measures the same programs,
+both printing tables and asserting nothing; CI publishes them to the job summary, where a
+regression shows up as a column growing over time.
+
+- `cargo bench --bench compile_speed` — the compiler: lex / parse / link / check /
+  codegen per corpus in `benches/corpus/`, plus the run's peak RSS.
+- `cargo bench --bench runtime_speed` — what the compiler *emits*: wall time and peak RSS
+  of the built programs in `benches/runtime/`, then `quilon run` / `quilon build` latency
+  including a cold runtime-archive cache.
+
+`cargo bench --bench <name> -- --regen` rewrites that family's corpora from the
+generators in the bench. Resizing a corpus is a deliberate act that lands as a reviewable
+diff and breaks comparability with earlier numbers, which is why it is not automatic. Add
+a corpus when a change has a cost profile the existing ones don't cover.
 
 **Strict CI:** the workflow fails on any warning — it runs `cargo fmt --all -- --check`, `cargo clippy --all-targets --all-features -- -D warnings`, and `cargo build`/`cargo test` under `RUSTFLAGS=-D warnings`. Keep changes warning-clean.
 

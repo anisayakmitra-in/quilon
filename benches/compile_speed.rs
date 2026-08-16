@@ -36,6 +36,9 @@ const CORPORA: &[(&str, &str)] = &[
     ("deep", "300 functions, each nested 100 deep"),
     ("wide_overloads", "300-member overload set"),
     ("corelib", "imports core.io/test/cli"),
+    ("many_modules", "50 imported files"),
+    ("interpolation", "600 interpolated literals"),
+    ("sum_matches", "40 variants, 120 exhaustive matches"),
 ];
 
 fn main() {
@@ -63,8 +66,24 @@ fn main() {
             ms(t.total()),
         );
     }
+    if let Some(kb) = peak_rss_kb() {
+        // One figure for the whole run rather than a column: these corpora are compiled
+        // in one process, so the kernel's high-water mark is shared between them. It is
+        // dominated by the largest, which is the number the memory work needs anyway.
+        println!("Peak RSS for the whole run: {:.1} MB", kb as f64 / 1024.0);
+    }
     // A trailing blank line closes the table for whatever reads it back out of the log.
     println!();
+}
+
+/// The process's peak resident set, as the kernel recorded it. `None` where the OS does
+/// not report one this way.
+fn peak_rss_kb() -> Option<u64> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    status.lines().find_map(|line| {
+        let rest = line.strip_prefix("VmHWM:")?;
+        rest.split_whitespace().next()?.parse().ok()
+    })
 }
 
 /// Rewrite `benches/corpus/` from the generators below — `cargo bench -- --regen`.
@@ -80,8 +99,18 @@ fn regenerate() {
         ("deep", deep_program(300, 100)),
         ("wide_overloads", overload_program(300)),
         ("corelib", corelib_program()),
+        ("interpolation", interpolation_program(600)),
+        ("sum_matches", sum_match_program(40, 120)),
     ] {
         let path = dir.join(format!("{stem}.ql"));
+        std::fs::write(&path, source).unwrap_or_else(|e| panic!("writing {path:?}: {e}"));
+        println!("wrote {}", path.display());
+    }
+
+    let modules = dir.join("many_modules");
+    std::fs::create_dir_all(&modules).unwrap_or_else(|e| panic!("creating {modules:?}: {e}"));
+    for (name, source) in many_modules_program(50) {
+        let path = modules.join(name);
         std::fs::write(&path, source).unwrap_or_else(|e| panic!("writing {path:?}: {e}"));
         println!("wrote {}", path.display());
     }
@@ -96,6 +125,9 @@ struct Corpus {
     name: &'static str,
     shape: &'static str,
     source: String,
+    /// The directory a `<< "path"` import resolves against — the corpus's own, so a
+    /// multi-file corpus finds its siblings.
+    dir: std::path::PathBuf,
 }
 
 #[derive(Default)]
@@ -117,14 +149,20 @@ impl Corpus {
     /// Read a committed corpus. A missing file means someone deleted an input rather
     /// than that the benchmark should quietly measure something else, so it is fatal.
     fn read(name: &'static str, shape: &'static str) -> Self {
-        let path = corpus_dir().join(format!("{name}.ql"));
+        let path = match name {
+            // A multi-file corpus is a directory; its root imports the siblings beside it.
+            "many_modules" => corpus_dir().join("many_modules").join("root.ql"),
+            _ => corpus_dir().join(format!("{name}.ql")),
+        };
         let source = std::fs::read_to_string(&path).unwrap_or_else(|e| {
             panic!("reading corpus {path:?}: {e} — run `cargo bench -- --regen` to rebuild it")
         });
+        let dir = path.parent().unwrap_or(&path).to_path_buf();
         Self {
             name,
             shape,
             source,
+            dir,
         }
     }
 
@@ -144,7 +182,7 @@ impl Corpus {
             total.parse += start.elapsed();
 
             let start = Instant::now();
-            let program = quilon::modules::link(program, std::path::Path::new("."))
+            let program = quilon::modules::link(program, &self.dir)
                 .expect("benchmark corpus must resolve its imports");
             total.link += start.elapsed();
 
@@ -228,4 +266,136 @@ fn overload_program(members: usize) -> String {
 /// itself, which is checked and emitted whole whether or not the program uses it.
 fn corelib_program() -> String {
     "<< core.io\n<< core.test\n<< core.cli\n\n^ = () -> $ => assert(1 + 1 == 2)\n".to_string()
+}
+
+/// Many small imported files: scales the module system — resolution, per-file span
+/// plumbing, and checking every export whether or not the root uses it.
+///
+/// The modules are named after plausible subjects and their exports after what each
+/// function would do, so a failure that names one (`cannot read module "pricing.ql"`,
+/// or a span inside `geometry_scale`) says where to look. The bodies are arithmetic
+/// stand-ins: the corpus measures the module machinery, not the code inside.
+fn many_modules_program(count: usize) -> Vec<(String, String)> {
+    const SUBJECTS: &[&str] = &[
+        "arithmetic",
+        "geometry",
+        "statistics",
+        "strings",
+        "parsing",
+        "validation",
+        "formatting",
+        "currency",
+        "dates",
+        "durations",
+        "angles",
+        "vectors",
+        "matrices",
+        "physics",
+        "chemistry",
+        "astronomy",
+        "navigation",
+        "mapping",
+        "routing",
+        "scheduling",
+        "billing",
+        "inventory",
+        "pricing",
+        "shipping",
+        "ordering",
+        "catalog",
+        "payments",
+        "accounting",
+        "budgeting",
+        "forecasting",
+        "sampling",
+        "ranking",
+        "scoring",
+        "matching",
+        "filtering",
+        "sorting",
+        "hashing",
+        "encoding",
+        "compression",
+        "checksums",
+        "geometry3d",
+        "colour",
+        "audio",
+        "imaging",
+        "telemetry",
+        "logging",
+        "caching",
+        "batching",
+        "throttling",
+        "retrying",
+    ];
+    const OPERATIONS: &[&str] = &[
+        "offset", "scale", "clamp", "round", "wrap", "snap", "bias", "damp", "boost", "trim",
+    ];
+
+    let subject_of = |i: usize| {
+        // Past the list, keep names unique and still readable rather than wrapping.
+        match i / SUBJECTS.len() {
+            0 => SUBJECTS[i].to_string(),
+            n => format!("{}{}", SUBJECTS[i % SUBJECTS.len()], n + 1),
+        }
+    };
+
+    let mut files = Vec::new();
+    for i in 0..count {
+        let subject = subject_of(i);
+        let mut module = String::new();
+        for (step, operation) in OPERATIONS.iter().enumerate() {
+            let _ = writeln!(
+                module,
+                ">> {subject}_{operation} = (x :: Num) -> Num => x + {step}"
+            );
+        }
+        files.push((format!("{subject}.ql"), module));
+    }
+
+    let mut root = String::new();
+    for i in 0..count {
+        let _ = writeln!(root, "<< \"{}.ql\"", subject_of(i));
+    }
+    let _ = writeln!(
+        root,
+        "\n^ = () -> Num => {}_offset(1) + {}_trim(2)",
+        subject_of(0),
+        subject_of(count - 1)
+    );
+    files.push(("root.ql".to_string(), root));
+    files
+}
+
+/// Interpolated literals: every hole is an expression to check and a render call to
+/// emit, so this scales the interpolation path rather than plain text.
+fn interpolation_program(count: usize) -> String {
+    let mut src = String::from("<< core.io\n\n");
+    for i in 0..count {
+        let _ = writeln!(
+            src,
+            "s{i} = (n :: Num, t :: Text) -> Text => \"item `n` of `t` at `n * {i}` end\""
+        );
+    }
+    let _ = writeln!(src, "^ = () -> Num => s0(1, \"a\").size");
+    src
+}
+
+/// A wide sum type matched exhaustively many times: scales variant registration, arm
+/// checking, exhaustiveness, and the tag dispatch codegen emits per match.
+fn sum_match_program(variants: usize, matches: usize) -> String {
+    let alternatives = (0..variants)
+        .map(|i| format!("V{i}(Num)"))
+        .collect::<Vec<_>>()
+        .join(" / ");
+    let mut src = format!("Wide = {alternatives}\n\n");
+    for m in 0..matches {
+        let arms = (0..variants)
+            .map(|i| format!("  | V{i}(n) => n + {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let _ = writeln!(src, "pick{m} = (w :: Wide) -> Num => w ?\n{arms}\n");
+    }
+    let _ = writeln!(src, "^ = () -> Num => pick0(V0(1))");
+    src
 }
