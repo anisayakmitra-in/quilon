@@ -25,26 +25,30 @@ use quilon::typechecker::TypeChecker;
 /// people skip it.
 const RUNS: u32 = 5;
 
+/// Where the corpora live, relative to the crate root. The files in here are the
+/// benchmark's input: what runs is the committed bytes, so every run — yours, mine,
+/// CI's, and one a year from now — compiles exactly the same programs.
+const CORPUS_DIR: &str = "benches/corpus";
+
+/// The corpora, in table order: file stem, and what the file is shaped to stress.
+const CORPORA: &[(&str, &str)] = &[
+    ("flat", "4000 top-level functions"),
+    ("deep", "300 functions, each nested 100 deep"),
+    ("wide_overloads", "300-member overload set"),
+    ("corelib", "imports core.io/test/cli"),
+];
+
 fn main() {
-    let corpora = [
-        Corpus::new("flat", "4000 top-level functions", flat_program(4000)),
-        Corpus::new(
-            "deep",
-            "300 functions, each nested 100 deep",
-            deep_program(300, 100),
-        ),
-        Corpus::new(
-            "wide-overloads",
-            "300-member overload set",
-            overload_program(300),
-        ),
-        Corpus::new("corelib", "imports core.io/test/cli", corelib_program()),
-    ];
+    if std::env::args().any(|a| a == "--regen") {
+        regenerate();
+        return;
+    }
 
     println!("Compile-speed benchmark — mean of {RUNS} runs, milliseconds\n");
     println!("| corpus | shape | bytes | lex | parse | link | check | codegen | total |");
     println!("|---|---|--:|--:|--:|--:|--:|--:|--:|");
-    for corpus in &corpora {
+    for (stem, shape) in CORPORA {
+        let corpus = Corpus::read(stem, shape);
         let t = corpus.measure();
         println!(
             "| `{}` | {} | {} | {} | {} | {} | {} | {} | **{}** |",
@@ -63,7 +67,31 @@ fn main() {
     println!();
 }
 
-/// One generated program, with a label for the table.
+/// Rewrite `benches/corpus/` from the generators below — `cargo bench -- --regen`.
+///
+/// The generators are kept for this one purpose: producing a corpus of a different size
+/// is a deliberate act whose result lands in git as a reviewable diff, not something
+/// that happens quietly on the next run because a constant moved. Changing a corpus
+/// breaks comparability with every number recorded before it, so it should be visible.
+fn regenerate() {
+    let dir = corpus_dir();
+    for (stem, source) in [
+        ("flat", flat_program(4000)),
+        ("deep", deep_program(300, 100)),
+        ("wide_overloads", overload_program(300)),
+        ("corelib", corelib_program()),
+    ] {
+        let path = dir.join(format!("{stem}.ql"));
+        std::fs::write(&path, source).unwrap_or_else(|e| panic!("writing {path:?}: {e}"));
+        println!("wrote {}", path.display());
+    }
+}
+
+fn corpus_dir() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(CORPUS_DIR)
+}
+
+/// One corpus: the committed source, with a label for the table.
 struct Corpus {
     name: &'static str,
     shape: &'static str,
@@ -86,7 +114,13 @@ impl Timing {
 }
 
 impl Corpus {
-    fn new(name: &'static str, shape: &'static str, source: String) -> Self {
+    /// Read a committed corpus. A missing file means someone deleted an input rather
+    /// than that the benchmark should quietly measure something else, so it is fatal.
+    fn read(name: &'static str, shape: &'static str) -> Self {
+        let path = corpus_dir().join(format!("{name}.ql"));
+        let source = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+            panic!("reading corpus {path:?}: {e} — run `cargo bench -- --regen` to rebuild it")
+        });
         Self {
             name,
             shape,
