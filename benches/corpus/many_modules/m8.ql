@@ -1,0 +1,10 @@
+>> m8f0 = (x :: Num) -> Num => x + 0
+>> m8f1 = (x :: Num) -> Num => x + 1
+>> m8f2 = (x :: Num) -> Num => x + 2
+>> m8f3 = (x :: Num) -> Num => x + 3
+>> m8f4 = (x :: Num) -> Num => x + 4
+>> m8f5 = (x :: Num) -> Num => x + 5
+>> m8f6 = (x :: Num) -> Num => x + 6
+>> m8f7 = (x :: Num) -> Num => x + 7
+>> m8f8 = (x :: Num) -> Num => x + 8
+>> m8f9 = (x :: Num) -> Num => x + 9

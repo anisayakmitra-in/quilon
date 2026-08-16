@@ -1,0 +1,10 @@
+>> m28f0 = (x :: Num) -> Num => x + 0
+>> m28f1 = (x :: Num) -> Num => x + 1
+>> m28f2 = (x :: Num) -> Num => x + 2
+>> m28f3 = (x :: Num) -> Num => x + 3
+>> m28f4 = (x :: Num) -> Num => x + 4
+>> m28f5 = (x :: Num) -> Num => x + 5
+>> m28f6 = (x :: Num) -> Num => x + 6
+>> m28f7 = (x :: Num) -> Num => x + 7
+>> m28f8 = (x :: Num) -> Num => x + 8
+>> m28f9 = (x :: Num) -> Num => x + 9

@@ -1,0 +1,10 @@
+>> m32f0 = (x :: Num) -> Num => x + 0
+>> m32f1 = (x :: Num) -> Num => x + 1
+>> m32f2 = (x :: Num) -> Num => x + 2
+>> m32f3 = (x :: Num) -> Num => x + 3
+>> m32f4 = (x :: Num) -> Num => x + 4
+>> m32f5 = (x :: Num) -> Num => x + 5
+>> m32f6 = (x :: Num) -> Num => x + 6
+>> m32f7 = (x :: Num) -> Num => x + 7
+>> m32f8 = (x :: Num) -> Num => x + 8
+>> m32f9 = (x :: Num) -> Num => x + 9

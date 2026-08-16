@@ -1,0 +1,10 @@
+>> m4f0 = (x :: Num) -> Num => x + 0
+>> m4f1 = (x :: Num) -> Num => x + 1
+>> m4f2 = (x :: Num) -> Num => x + 2
+>> m4f3 = (x :: Num) -> Num => x + 3
+>> m4f4 = (x :: Num) -> Num => x + 4
+>> m4f5 = (x :: Num) -> Num => x + 5
+>> m4f6 = (x :: Num) -> Num => x + 6
+>> m4f7 = (x :: Num) -> Num => x + 7
+>> m4f8 = (x :: Num) -> Num => x + 8
+>> m4f9 = (x :: Num) -> Num => x + 9

@@ -1,0 +1,10 @@
+>> m45f0 = (x :: Num) -> Num => x + 0
+>> m45f1 = (x :: Num) -> Num => x + 1
+>> m45f2 = (x :: Num) -> Num => x + 2
+>> m45f3 = (x :: Num) -> Num => x + 3
+>> m45f4 = (x :: Num) -> Num => x + 4
+>> m45f5 = (x :: Num) -> Num => x + 5
+>> m45f6 = (x :: Num) -> Num => x + 6
+>> m45f7 = (x :: Num) -> Num => x + 7
+>> m45f8 = (x :: Num) -> Num => x + 8
+>> m45f9 = (x :: Num) -> Num => x + 9

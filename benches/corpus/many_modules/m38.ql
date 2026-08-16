@@ -1,0 +1,10 @@
+>> m38f0 = (x :: Num) -> Num => x + 0
+>> m38f1 = (x :: Num) -> Num => x + 1
+>> m38f2 = (x :: Num) -> Num => x + 2
+>> m38f3 = (x :: Num) -> Num => x + 3
+>> m38f4 = (x :: Num) -> Num => x + 4
+>> m38f5 = (x :: Num) -> Num => x + 5
+>> m38f6 = (x :: Num) -> Num => x + 6
+>> m38f7 = (x :: Num) -> Num => x + 7
+>> m38f8 = (x :: Num) -> Num => x + 8
+>> m38f9 = (x :: Num) -> Num => x + 9

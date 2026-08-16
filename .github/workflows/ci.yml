@@ -75,15 +75,26 @@ jobs:
       # Informational only: no threshold, no gate. Shared runners are too noisy for
       # absolute limits, so the numbers are published for trend tracking and a ratio
       # tripwire is a later decision once there is history to set it from.
-      - name: Compile-speed benchmark
+      - name: Benchmarks
         run: |
           set -euo pipefail
-          cargo bench --bench compile_speed | tee bench-output.txt
+          cargo bench --bench compile_speed | tee compile-bench.txt
+          cargo bench --bench runtime_speed | tee runtime-bench.txt
           {
-            echo "### Compile-speed benchmark"
+            echo "### Benchmarks"
             echo
             echo "Informational — no pass/fail. Shared-runner numbers are noisy in"
             echo "absolute terms; watch the trend across commits."
             echo
-            sed -n '/^| corpus/,/^$/p' bench-output.txt
+            echo "#### Compile speed"
+            echo
+            sed -n '/^| corpus/,/^$/p' compile-bench.txt
+            grep '^Peak RSS' compile-bench.txt || true
+            echo
+            echo "#### Generated-code speed"
+            echo
+            sed -n '/^| program/,/^$/p' runtime-bench.txt
+            echo "#### Command latency"
+            echo
+            sed -n '/^| command/,/^$/p' runtime-bench.txt
           } >> "$GITHUB_STEP_SUMMARY"

@@ -28,6 +28,11 @@ quilon-rt = { path = "quilon-rt" }
 # from a distributed binary. Pure-Rust backend (miniz_oxide) by default.
 flate2 = "1.1"
 
+[dev-dependencies]
+# `wait4`, for the exact peak RSS the kernel recorded for a benchmarked child process.
+# Already in the dependency graph; this only makes it directly visible to the benches.
+libc = "0.2"
+
 [build-dependencies]
 # Compressing `libquilon_rt.a` before it is embedded into the compiler binary.
 flate2 = "1.1"
@@ -37,4 +42,10 @@ flate2 = "1.1"
 # sampling machinery nor a dependency, and stays fast enough to run on every PR.
 [[bench]]
 name = "compile_speed"
+harness = false
+
+# The runtime benchmark (`cargo bench --bench runtime_speed`): how fast the programs the
+# compiler emits actually run, and what a command costs end to end.
+[[bench]]
+name = "runtime_speed"
 harness = false

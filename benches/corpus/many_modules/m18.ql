@@ -1,0 +1,10 @@
+>> m18f0 = (x :: Num) -> Num => x + 0
+>> m18f1 = (x :: Num) -> Num => x + 1
+>> m18f2 = (x :: Num) -> Num => x + 2
+>> m18f3 = (x :: Num) -> Num => x + 3
+>> m18f4 = (x :: Num) -> Num => x + 4
+>> m18f5 = (x :: Num) -> Num => x + 5
+>> m18f6 = (x :: Num) -> Num => x + 6
+>> m18f7 = (x :: Num) -> Num => x + 7
+>> m18f8 = (x :: Num) -> Num => x + 8
+>> m18f9 = (x :: Num) -> Num => x + 9

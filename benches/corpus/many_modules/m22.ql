@@ -1,0 +1,10 @@
+>> m22f0 = (x :: Num) -> Num => x + 0
+>> m22f1 = (x :: Num) -> Num => x + 1
+>> m22f2 = (x :: Num) -> Num => x + 2
+>> m22f3 = (x :: Num) -> Num => x + 3
+>> m22f4 = (x :: Num) -> Num => x + 4
+>> m22f5 = (x :: Num) -> Num => x + 5
+>> m22f6 = (x :: Num) -> Num => x + 6
+>> m22f7 = (x :: Num) -> Num => x + 7
+>> m22f8 = (x :: Num) -> Num => x + 8
+>> m22f9 = (x :: Num) -> Num => x + 9
