@@ -270,20 +270,99 @@ fn corelib_program() -> String {
 
 /// Many small imported files: scales the module system — resolution, per-file span
 /// plumbing, and checking every export whether or not the root uses it.
+///
+/// The modules are named after plausible subjects and their exports after what each
+/// function would do, so a failure that names one (`cannot read module "pricing.ql"`,
+/// or a span inside `geometry_scale`) says where to look. The bodies are arithmetic
+/// stand-ins: the corpus measures the module machinery, not the code inside.
 fn many_modules_program(count: usize) -> Vec<(String, String)> {
+    const SUBJECTS: &[&str] = &[
+        "arithmetic",
+        "geometry",
+        "statistics",
+        "strings",
+        "parsing",
+        "validation",
+        "formatting",
+        "currency",
+        "dates",
+        "durations",
+        "angles",
+        "vectors",
+        "matrices",
+        "physics",
+        "chemistry",
+        "astronomy",
+        "navigation",
+        "mapping",
+        "routing",
+        "scheduling",
+        "billing",
+        "inventory",
+        "pricing",
+        "shipping",
+        "ordering",
+        "catalog",
+        "payments",
+        "accounting",
+        "budgeting",
+        "forecasting",
+        "sampling",
+        "ranking",
+        "scoring",
+        "matching",
+        "filtering",
+        "sorting",
+        "hashing",
+        "encoding",
+        "compression",
+        "checksums",
+        "geometry3d",
+        "colour",
+        "audio",
+        "imaging",
+        "telemetry",
+        "logging",
+        "caching",
+        "batching",
+        "throttling",
+        "retrying",
+    ];
+    const OPERATIONS: &[&str] = &[
+        "offset", "scale", "clamp", "round", "wrap", "snap", "bias", "damp", "boost", "trim",
+    ];
+
+    let subject_of = |i: usize| {
+        // Past the list, keep names unique and still readable rather than wrapping.
+        match i / SUBJECTS.len() {
+            0 => SUBJECTS[i].to_string(),
+            n => format!("{}{}", SUBJECTS[i % SUBJECTS.len()], n + 1),
+        }
+    };
+
     let mut files = Vec::new();
     for i in 0..count {
+        let subject = subject_of(i);
         let mut module = String::new();
-        for f in 0..10 {
-            let _ = writeln!(module, ">> m{i}f{f} = (x :: Num) -> Num => x + {f}");
+        for (step, operation) in OPERATIONS.iter().enumerate() {
+            let _ = writeln!(
+                module,
+                ">> {subject}_{operation} = (x :: Num) -> Num => x + {step}"
+            );
         }
-        files.push((format!("m{i}.ql"), module));
+        files.push((format!("{subject}.ql"), module));
     }
+
     let mut root = String::new();
     for i in 0..count {
-        let _ = writeln!(root, "<< \"m{i}.ql\"");
+        let _ = writeln!(root, "<< \"{}.ql\"", subject_of(i));
     }
-    let _ = writeln!(root, "\n^ = () -> Num => m0f0(1) + m{}f9(2)", count - 1);
+    let _ = writeln!(
+        root,
+        "\n^ = () -> Num => {}_offset(1) + {}_trim(2)",
+        subject_of(0),
+        subject_of(count - 1)
+    );
     files.push(("root.ql".to_string(), root));
     files
 }
