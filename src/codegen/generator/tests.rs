@@ -213,3 +213,30 @@ fn test_method_calls_sibling_method() {
     assert!(ir.contains("@Point_sum"));
     assert!(ir.contains("@Point_doubled"));
 }
+
+/// Every symbol the runtime exports must have a prototype here, and every prototype must
+/// name a symbol the runtime exports. The two halves used to be kept in step by hand,
+/// and a miss did not fail the build — it produced a call to a null address at run time.
+/// (`memcpy` is libc's, so it is the one prototype with no runtime counterpart.)
+#[test]
+fn every_runtime_intrinsic_can_be_declared() {
+    let context = Context::create();
+    let codegen = CodeGenerator::new(&context, "intrinsic_parity");
+
+    for (name, _) in quilon_rt::INTRINSICS {
+        assert!(
+            codegen.get_intrinsic(name).is_ok(),
+            "the runtime exports `{name}` but codegen has no prototype for it, so a call \
+             to it would be emitted against a symbol codegen never declared"
+        );
+    }
+
+    assert!(
+        codegen.get_intrinsic("memcpy").is_ok(),
+        "libc's memcpy stays declarable"
+    );
+    assert!(
+        codegen.get_intrinsic("__not_a_real_intrinsic").is_err(),
+        "a name the runtime does not export must be refused, not declared"
+    );
+}

@@ -54,71 +54,84 @@ pub use text::{
 use mem::QlSlice;
 use std::os::raw::{c_char, c_int, c_void};
 
-/// Force every runtime intrinsic to be RETAINED in the `staticlib` archive, even
-/// though nothing in this crate calls them (they are only ever called from the
-/// LLVM IR the code generator emits, which rustc never sees). Without an in-crate
-/// reference, the staticlib's link step can dead-strip an intrinsic — observed in
-/// CI as `undefined reference to __text_cmp` during AOT linking while the JIT (which
-/// maps symbols by address) was unaffected. The `#[used]` table is a reachability
-/// root that pins all of them. `#[used]` only guarantees retention when its
-/// references stay within the intrinsic's own codegen unit, so the crate is compiled
-/// as a single codegen unit (`codegen-units = 1` for `quilon-rt` in the workspace
-/// `Cargo.toml`) — do not remove that override, or a multi-CGU split scatters the
-/// intrinsics away from this table and some are nondeterministically dropped again.
-/// (The AOT link also wraps the archive in `--whole-archive`, which pulls every
-/// object already in the archive; keeping the intrinsics IN the archive is this
-/// table + one codegen unit.)
-// Function pointers transmuted to a common fn-pointer type — `Sync`,
-// const-constructible, and each entry pins its intrinsic. Kept as a `#[used]`
-// reachability root so the staticlib link never dead-strips an intrinsic that is
-// only ever called from generated LLVM IR (never from Rust). All entries are plain
-// `extern "C"` fn items; the transmute only erases their (ABI-compatible) parameter
-// lists for storage — the pointers are never called through this array.
+/// Every runtime intrinsic, listed once.
+///
+/// Three things have to agree about this set, and each was maintained by hand: the
+/// retention root, the JIT's name-to-address mapping, and the prototypes the code
+/// generator declares. Adding an intrinsic to only two of them produced a call to a null
+/// address at run time rather than a compile error — a segfault with no diagnostic. The
+/// two that can be derived are generated from this list; the third is in another crate
+/// (building a signature needs an LLVM context) and is held to it by a test and by
+/// `get_intrinsic` refusing any name absent from `INTRINSICS`.
+///
+/// Each entry's signature is used only to erase — ABI-compatibly — to a common
+/// fn-pointer type for storage. Nothing is ever called through either table.
 type RtFn = unsafe extern "C" fn();
-// Each `transmute` only erases an (ABI-irrelevant) parameter list to a common
-// fn-pointer type for storage; the entries are never called through this array.
-#[allow(clippy::missing_transmute_annotations)]
-#[used]
-static QUILON_RT_INTRINSICS: [RtFn; 22] = unsafe {
-    [
-        core::mem::transmute(__gc_init as extern "C" fn()),
-        core::mem::transmute(__num_to_text as extern "C" fn(f64) -> QlSlice),
-        core::mem::transmute(__bool_to_text as extern "C" fn(i64) -> QlSlice),
-        core::mem::transmute(__exit as extern "C" fn(c_int) -> !),
-        core::mem::transmute(__index_fail as extern "C" fn(f64, i64) -> !),
-        core::mem::transmute(__alloc as extern "C" fn(i64) -> *mut c_void),
-        core::mem::transmute(__text_length as extern "C" fn(*const u8, i64) -> i64),
-        core::mem::transmute(__text_cmp as extern "C" fn(*const u8, i64, *const u8, i64) -> i32),
-        core::mem::transmute(__write_bytes as extern "C" fn(i64, *const u8, i64) -> i64),
-        core::mem::transmute(__print_text_fd as extern "C" fn(i64, *const c_char)),
-        core::mem::transmute(
-            __argv_to_text_array as extern "C" fn(i64, *const *const c_char) -> QlSlice,
-        ),
-        core::mem::transmute(__envp_to_pairs as extern "C" fn(*const *const c_char) -> QlSlice),
-        core::mem::transmute(__text_trim_start as extern "C" fn(*const u8, i64) -> QlSlice),
-        core::mem::transmute(__text_trim_end as extern "C" fn(*const u8, i64) -> QlSlice),
-        core::mem::transmute(__text_to_upper as extern "C" fn(*const u8, i64) -> QlSlice),
-        core::mem::transmute(__text_to_lower as extern "C" fn(*const u8, i64) -> QlSlice),
-        core::mem::transmute(
-            __text_contains as extern "C" fn(*const u8, i64, *const u8, i64) -> i64,
-        ),
-        core::mem::transmute(
-            __text_index_of as extern "C" fn(*const u8, i64, *const u8, i64) -> i64,
-        ),
-        core::mem::transmute(
-            __text_replace_all
-                as extern "C" fn(*const u8, i64, *const u8, i64, *const u8, i64) -> QlSlice,
-        ),
-        core::mem::transmute(
-            __text_replace_n
-                as extern "C" fn(*const u8, i64, *const u8, i64, *const u8, i64, i64) -> QlSlice,
-        ),
-        core::mem::transmute(__text_slice as extern "C" fn(*const u8, i64, i64, i64) -> QlSlice),
-        core::mem::transmute(
-            __text_split as extern "C" fn(*const u8, i64, *const u8, i64) -> QlSlice,
-        ),
-    ]
-};
+
+macro_rules! intrinsic_registry {
+    ($($name:ident : $sig:ty),+ $(,)?) => {
+        /// Name to address for every intrinsic, in declaration order. The JIT maps each
+        /// declaration the code generator emitted onto the address here; an AOT link
+        /// resolves the same names out of the archive instead.
+        pub static INTRINSICS: &[(&str, RtFn)] = &[
+            $((
+                stringify!($name),
+                unsafe { core::mem::transmute::<$sig, RtFn>($name as $sig) },
+            )),+
+        ];
+
+        /// Force every runtime intrinsic to be RETAINED in the `staticlib` archive, even
+        /// though nothing in this crate calls them (they are only ever called from the
+        /// LLVM IR the code generator emits, which rustc never sees). Without an in-crate
+        /// reference, the staticlib's link step could dead-strip an intrinsic, and this
+        /// `#[used]` table is the reachability root that pins all of them; the AOT link
+        /// then wraps the archive in `--whole-archive`, so every object in it is pulled
+        /// into the executable.
+        ///
+        /// What checks that this still works is `tests/intrinsic_link_test.rs`: it builds
+        /// a program reaching every intrinsic and links it under both linkers, so a
+        /// dropped symbol is an undefined reference on every run. Prefer extending that
+        /// gate over adding build settings — the last `undefined reference` scare here
+        /// was diagnosed as dead-stripping and answered with a `codegen-units = 1`
+        /// override, and turned out to be test binaries copying over the shared archive
+        /// non-atomically while a sibling linked against it. The override only ever
+        /// shrank the archive enough to narrow that window.
+        ///
+        /// Generated from the same list as `INTRINSICS`, so the two cannot drift — but it
+        /// stays a plain `[RtFn; N]` array rather than borrowing the other table, because
+        /// THIS shape is the one whose retention behaviour is established.
+        #[allow(clippy::missing_transmute_annotations)]
+        #[used]
+        static QUILON_RT_INTRINSICS: [RtFn; [$(stringify!($name)),+].len()] = unsafe {
+            [$(core::mem::transmute::<$sig, RtFn>($name as $sig)),+]
+        };
+    };
+}
+
+intrinsic_registry! {
+    __gc_init: extern "C" fn(),
+    __num_to_text: extern "C" fn(f64) -> QlSlice,
+    __bool_to_text: extern "C" fn(i64) -> QlSlice,
+    __exit: extern "C" fn(c_int) -> !,
+    __index_fail: extern "C" fn(f64, i64) -> !,
+    __alloc: extern "C" fn(i64) -> *mut c_void,
+    __text_length: extern "C" fn(*const u8, i64) -> i64,
+    __text_cmp: extern "C" fn(*const u8, i64, *const u8, i64) -> i32,
+    __write_bytes: extern "C" fn(i64, *const u8, i64) -> i64,
+    __print_text_fd: extern "C" fn(i64, *const c_char),
+    __argv_to_text_array: extern "C" fn(i64, *const *const c_char) -> QlSlice,
+    __envp_to_pairs: extern "C" fn(*const *const c_char) -> QlSlice,
+    __text_trim_start: extern "C" fn(*const u8, i64) -> QlSlice,
+    __text_trim_end: extern "C" fn(*const u8, i64) -> QlSlice,
+    __text_to_upper: extern "C" fn(*const u8, i64) -> QlSlice,
+    __text_to_lower: extern "C" fn(*const u8, i64) -> QlSlice,
+    __text_contains: extern "C" fn(*const u8, i64, *const u8, i64) -> i64,
+    __text_index_of: extern "C" fn(*const u8, i64, *const u8, i64) -> i64,
+    __text_replace_all: extern "C" fn(*const u8, i64, *const u8, i64, *const u8, i64) -> QlSlice,
+    __text_replace_n: extern "C" fn(*const u8, i64, *const u8, i64, *const u8, i64, i64) -> QlSlice,
+    __text_slice: extern "C" fn(*const u8, i64, i64, i64) -> QlSlice,
+    __text_split: extern "C" fn(*const u8, i64, *const u8, i64) -> QlSlice,
+}
 
 // Shared unit-test support. `GC_LOCK` is taken by GC-touching tests in more than one
 // module; the `QlSlice` inspection helpers back the `text` tests. Both live here at the
