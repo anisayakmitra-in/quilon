@@ -5,12 +5,12 @@
 //!
 //!  * timed waits — the nearest sleep deadline becomes the poll timeout, so the
 //!    scheduler wakes in time to resume due `sleep`ers; and
-//!  * socket readiness — non-blocking TCP sources ([`crate::net`]) are registered
-//!    with a unique [`Token`]; when `poll` reports a token ready the scheduler
-//!    resumes the one fiber parked on it.
+//!  * source readiness — non-blocking sources (a TCP socket in [`crate::net`] today,
+//!    files/pipes later) are registered with a unique [`Token`]; when `poll` reports
+//!    a token ready the scheduler resumes the one fiber parked on it.
 //!
 //! A single `Poll::poll` services both: the timeout bounds how long it blocks, and
-//! any socket that becomes ready before then returns it early. `EINTR` and spurious
+//! any source that becomes ready before then returns it early. `EINTR` and spurious
 //! wakeups are harmless — the scheduler re-checks timers and only wakes fibers whose
 //! token actually fired.
 
@@ -67,7 +67,7 @@ impl Reactor {
 
     /// Block until `timeout` elapses or a registered source is ready. `None` blocks
     /// indefinitely; the scheduler passes `None` only when fibers are parked on
-    /// sockets with no pending timer.
+    /// source readiness with no pending timer.
     pub fn wait(&mut self, timeout: Option<Duration>) {
         self.events.clear();
         let _ = self.poll.poll(&mut self.events, timeout);

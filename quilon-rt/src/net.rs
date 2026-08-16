@@ -4,7 +4,7 @@
 //!
 //! [`TcpListener`] and [`TcpStream`] wrap `mio`'s non-blocking sockets and register
 //! them with the reactor's `Poll`. Every op that would block parks the calling fiber
-//! (via [`crate::scheduler::park_on_io`]) instead of spinning or blocking the OS
+//! (via [`crate::scheduler::park_on_readiness`]) instead of spinning or blocking the OS
 //! thread: it (re)registers the source for the readiness it needs, yields to the
 //! scheduler, and is resumed only when the reactor reports that token ready — exactly
 //! the way [`crate::scheduler::sleep`] parks on a deadline. Many sockets thus make
@@ -18,7 +18,9 @@
 //! *why* it is parked. A socket-blocked fiber is therefore covered identically to a
 //! sleeping one; `tests::socket_parked_fiber_roots_survive_collection` proves it.
 
-use crate::scheduler::{deregister_io, park_on_io, register_io, reregister_io};
+use crate::scheduler::{
+    deregister_readiness, park_on_readiness, register_readiness, reregister_readiness,
+};
 use mio::event::Source;
 use mio::{Interest, Token};
 use std::io::{self, Read, Write};
@@ -42,8 +44,8 @@ fn io_loop<S: Source, T>(
             Ok(value) => return Ok(value),
             Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
             Err(ref e) if would_block(e) => {
-                reregister_io(source, token, interest)?;
-                park_on_io(token);
+                reregister_readiness(source, token, interest)?;
+                park_on_readiness(token);
             }
             Err(e) => return Err(e),
         }
@@ -60,7 +62,7 @@ impl TcpListener {
     /// Bind and register for read (connection) readiness.
     pub fn bind(addr: SocketAddr) -> io::Result<TcpListener> {
         let mut inner = mio::net::TcpListener::bind(addr)?;
-        let token = register_io(&mut inner, Interest::READABLE)?;
+        let token = register_readiness(&mut inner, Interest::READABLE)?;
         Ok(TcpListener { inner, token })
     }
 
@@ -74,14 +76,14 @@ impl TcpListener {
         let (mut inner, _peer) = io_loop(&mut self.inner, self.token, Interest::READABLE, |l| {
             l.accept()
         })?;
-        let token = register_io(&mut inner, Interest::READABLE)?;
+        let token = register_readiness(&mut inner, Interest::READABLE)?;
         Ok(TcpStream { inner, token })
     }
 }
 
 impl Drop for TcpListener {
     fn drop(&mut self) {
-        deregister_io(&mut self.inner);
+        deregister_readiness(&mut self.inner);
     }
 }
 
@@ -99,10 +101,10 @@ impl TcpStream {
     /// spins).
     pub fn connect(addr: SocketAddr) -> io::Result<TcpStream> {
         let mut inner = mio::net::TcpStream::connect(addr)?;
-        let token = register_io(&mut inner, Interest::WRITABLE)?;
+        let token = register_readiness(&mut inner, Interest::WRITABLE)?;
         let mut stream = TcpStream { inner, token };
         loop {
-            park_on_io(stream.token);
+            park_on_readiness(stream.token);
             if let Some(err) = stream.inner.take_error()? {
                 return Err(err);
             }
@@ -110,7 +112,7 @@ impl TcpStream {
                 Ok(_) => return Ok(stream),
                 // Handshake not finished yet: re-arm write interest and park again.
                 Err(ref e) if e.kind() == io::ErrorKind::NotConnected || would_block(e) => {
-                    reregister_io(&mut stream.inner, stream.token, Interest::WRITABLE)?;
+                    reregister_readiness(&mut stream.inner, stream.token, Interest::WRITABLE)?;
                 }
                 Err(e) => return Err(e),
             }
@@ -159,7 +161,7 @@ impl TcpStream {
 
 impl Drop for TcpStream {
     fn drop(&mut self) {
-        deregister_io(&mut self.inner);
+        deregister_readiness(&mut self.inner);
     }
 }
 
