@@ -37,6 +37,7 @@
 pub mod gc;
 pub mod io;
 pub mod mem;
+pub mod net;
 pub mod process;
 pub mod reactor;
 pub mod scheduler;

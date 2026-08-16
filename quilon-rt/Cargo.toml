@@ -18,8 +18,8 @@ unicode-segmentation = "1.13"
 
 # Concurrency substrate (single-threaded, cooperative). `corosensei` provides
 # stackful fibers; `mio` provides the reactor/poll loop that drives timed waits
-# (and, later, socket readiness). `libc` is used for the page size when computing
-# a fiber's GC-scannable stack range.
+# and non-blocking TCP socket readiness. `libc` is used for the page size when
+# computing a fiber's GC-scannable stack range.
 corosensei = "0.3"
-mio = { version = "1", features = ["os-poll"] }
+mio = { version = "1", features = ["os-poll", "net"] }
 libc = "0.2"
