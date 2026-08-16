@@ -38,3 +38,16 @@ flate2 = "1.1"
 [[bench]]
 name = "compile_speed"
 harness = false
+
+# Build `quilon-rt` as a single codegen unit. Its `#[no_mangle]` intrinsics are
+# retained only by the `#[used]` table in the crate root; across multiple codegen
+# units those references are cross-CGU and do not reliably prevent per-unit
+# internalization/DCE, so some intrinsics were nondeterministically dropped from
+# `libquilon_rt.a` (surfacing as `undefined reference to __gc_init` at AOT link on
+# some CI runners). One unit keeps the table and every intrinsic in the same object,
+# making retention intra-CGU and the exported set deterministic.
+[profile.dev.package.quilon-rt]
+codegen-units = 1
+
+[profile.release.package.quilon-rt]
+codegen-units = 1

@@ -57,9 +57,14 @@ use std::os::raw::{c_char, c_int, c_void};
 /// reference, the staticlib's link step can dead-strip an intrinsic — observed in
 /// CI as `undefined reference to __text_cmp` during AOT linking while the JIT (which
 /// maps symbols by address) was unaffected. The `#[used]` table is a reachability
-/// root that pins all of them deterministically, independent of codegen-unit layout
-/// or linker GC. (The AOT link also wraps the archive in `--whole-archive`; this
-/// guarantees the symbols are present to be pulled in the first place.)
+/// root that pins all of them. `#[used]` only guarantees retention when its
+/// references stay within the intrinsic's own codegen unit, so the crate is compiled
+/// as a single codegen unit (`codegen-units = 1` for `quilon-rt` in the workspace
+/// `Cargo.toml`) — do not remove that override, or a multi-CGU split scatters the
+/// intrinsics away from this table and some are nondeterministically dropped again.
+/// (The AOT link also wraps the archive in `--whole-archive`, which pulls every
+/// object already in the archive; keeping the intrinsics IN the archive is this
+/// table + one codegen unit.)
 // Function pointers transmuted to a common fn-pointer type — `Sync`,
 // const-constructible, and each entry pins its intrinsic. Kept as a `#[used]`
 // reachability root so the staticlib link never dead-strips an intrinsic that is
