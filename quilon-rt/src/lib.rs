@@ -34,9 +34,12 @@
 //! linking an AOT binary with gcc, pass `-lgc` explicitly (the `#[link]` directive
 //! only drives rustc's own links, not a downstream gcc invocation).
 
+pub mod gc;
 pub mod io;
 pub mod mem;
 pub mod process;
+pub mod reactor;
+pub mod scheduler;
 pub mod text;
 
 pub use io::{__print_text_fd, __write_bytes};
