@@ -16,7 +16,9 @@ use quilon::lexer::Lexer;
 use quilon::parser;
 use quilon::typechecker::{TypeChecker, TypeTable};
 use std::path::Path;
+use std::process::Command;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// LLVM's JIT and native-target initialization are not safe to run from several threads
 /// at once, and cargo runs a binary's tests in parallel — so every execution below is
@@ -77,4 +79,44 @@ fn front_end(src: &str, base_dir: Option<&Path>) -> (quilon::ast::Program, TypeT
         .check_program(&program)
         .expect("type checking failed");
     (program, types)
+}
+
+/// Put a freshly built `libquilon_rt.a` next to the compiler binary, where `quilon build`
+/// looks for it before falling back to the embedded copy.
+///
+/// **The placement must be atomic.** Test binaries run concurrently, several of them want
+/// this archive, and they all want it at the same path — so a plain copy truncates the
+/// file that a sibling's linker is reading, which surfaces as `undefined reference to`
+/// some intrinsic and looks exactly like a dead-stripping bug. (It was mistaken for one.)
+/// Writing a unique temp file in the destination directory and renaming over the target
+/// means every reader sees either the old archive or the new one, never a partial one.
+///
+/// The temp name needs more than the process id: a single test binary runs its own tests
+/// in parallel, so two copies from the SAME process must not collide either.
+pub fn ensure_runtime_lib(bin_dir: &Path) {
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+    let rt_target = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("rt-staticlib");
+    let status = Command::new(&cargo)
+        .args(["build", "-p", "quilon-rt"])
+        .arg("--target-dir")
+        .arg(&rt_target)
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .status();
+    assert!(
+        status.is_ok_and(|s| s.success()),
+        "failed to build libquilon_rt.a for the native-AOT tests"
+    );
+
+    let fresh = rt_target.join("debug").join("libquilon_rt.a");
+    let dest = bin_dir.join("libquilon_rt.a");
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let tmp = bin_dir.join(format!(
+        "libquilon_rt.a.{}.{}.tmp",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::copy(&fresh, &tmp).expect("copy fresh libquilon_rt.a to a temp file");
+    std::fs::rename(&tmp, &dest).expect("atomically place libquilon_rt.a next to the binary");
 }

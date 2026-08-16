@@ -167,3 +167,71 @@ pub(crate) mod test_support {
             .collect()
     }
 }
+
+#[cfg(test)]
+mod registry_tests {
+    /// Every C-ABI symbol this crate exports must be in [`INTRINSICS`].
+    ///
+    /// The registry is what the JIT maps and what the retention table pins, so a symbol
+    /// missing from it is one the JIT will call at a null address and the linker may drop
+    /// — the exact failure the registry exists to prevent, arriving through the one door
+    /// it does not watch. The code generator's parity test walks the registry outwards;
+    /// nothing walked inwards from the exports until here.
+    ///
+    /// The crate's own source is the evidence: every intrinsic is a hand-written
+    /// `#[unsafe(no_mangle)] pub extern "C" fn`, so scanning for that needs no build
+    /// artifact and no `nm`, and it fails on the commit that adds the export rather than
+    /// on the machine that later fails to link it.
+    #[test]
+    fn every_exported_symbol_is_registered() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut exported: Vec<(String, String)> = Vec::new();
+        for entry in std::fs::read_dir(&dir).expect("reading the crate's source directory") {
+            let path = entry.expect("reading a source entry").path();
+            if path.extension().is_none_or(|e| e != "rs") {
+                continue;
+            }
+            let source = std::fs::read_to_string(&path).expect("reading a source file");
+            let file = path.file_name().unwrap().to_string_lossy().to_string();
+            for (index, line) in source.lines().enumerate() {
+                // The exported form is a `pub extern "C" fn` under a no-mangle attribute;
+                // the attribute may sit on the previous line, which is how they are written.
+                let Some(rest) = line.trim().strip_prefix("pub extern \"C\" fn ") else {
+                    continue;
+                };
+                let no_mangle = index
+                    .checked_sub(1)
+                    .and_then(|i| source.lines().nth(i))
+                    .is_some_and(|prev| prev.contains("no_mangle"));
+                if !no_mangle {
+                    continue;
+                }
+                let name = rest
+                    .split(['(', '<'])
+                    .next()
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string();
+                exported.push((name, file.clone()));
+            }
+        }
+
+        assert!(
+            !exported.is_empty(),
+            "found no exported intrinsics at all — this scan has stopped matching how they \
+             are written, so it is no longer checking anything"
+        );
+
+        let unregistered: Vec<String> = exported
+            .iter()
+            .filter(|(name, _)| !super::INTRINSICS.iter().any(|(known, _)| known == name))
+            .map(|(name, file)| format!("{name} ({file})"))
+            .collect();
+        assert!(
+            unregistered.is_empty(),
+            "these symbols are exported but missing from INTRINSICS: {unregistered:?} — the \
+             JIT would call them at a null address and the linker may drop them; add them \
+             to the intrinsic_registry! list"
+        );
+    }
+}

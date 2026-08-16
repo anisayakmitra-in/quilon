@@ -10,6 +10,7 @@ use std::process::Command;
 
 mod common;
 use common::JIT_LOCK;
+use common::ensure_runtime_lib;
 
 fn examples_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("examples")
@@ -109,55 +110,6 @@ fn tool_available(tool: &str) -> bool {
         .stderr(std::process::Stdio::null())
         .status()
         .is_ok()
-}
-
-/// Ensure a FRESH `libquilon_rt.a` sits next to the `quilon` binary — `quilon build`
-/// links it from there. This is subtle:
-///
-/// - Neither `cargo test` nor `cargo build --all-targets` emits the `staticlib`
-///   artifact (nothing in those target sets *consumes* it as a staticlib), so the `.a`
-///   in `target/` is whatever a previous build left — and in CI that is a STALE copy
-///   restored from the build cache. That is exactly how a newly-added runtime intrinsic
-///   (`__text_cmp`) links under the JIT yet fails AOT with `undefined reference`: the
-///   program references it, but the cached `.a` predates it.
-/// - Simply re-running `cargo build -p quilon-rt` does NOT help: if the crate's
-///   fingerprint is already up to date (the rlib was compiled this run), cargo will not
-///   re-emit the staticlib output, even if the `.a` on disk is stale/missing.
-///
-/// So build `quilon-rt` into a DEDICATED, cache-free target dir (which forces a fresh
-/// staticlib emit every time) and copy that `.a` next to the `quilon` binary.
-fn ensure_runtime_lib(bin_dir: &Path) {
-    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-    let rt_target = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("target")
-        .join("rt-staticlib");
-    let status = Command::new(&cargo)
-        .args(["build", "-p", "quilon-rt"])
-        .arg("--target-dir")
-        .arg(&rt_target)
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .status();
-    assert!(
-        status.is_ok_and(|s| s.success()),
-        "failed to build libquilon_rt.a for the native-AOT gate"
-    );
-    let fresh = rt_target.join("debug").join("libquilon_rt.a");
-    // Copy atomically: other test binaries run concurrently and copy the SAME archive to
-    // the SAME destination, so a plain `fs::copy` could interleave into a partial file that
-    // a racing `quilon build` then links. Write a process-unique temp in the dest dir and
-    // rename over it — the rename is atomic, so every reader sees a complete archive.
-    let dest = bin_dir.join("libquilon_rt.a");
-    // Unique per call (PID alone is shared by this binary's parallel tests, so add a global
-    // counter) so two concurrent copies never target the same temp file.
-    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let uniq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let tmp = bin_dir.join(format!(
-        "libquilon_rt.a.{}.{}.tmp",
-        std::process::id(),
-        uniq
-    ));
-    std::fs::copy(&fresh, &tmp).expect("copy fresh libquilon_rt.a to a temp file");
-    std::fs::rename(&tmp, &dest).expect("atomically place libquilon_rt.a next to the binary");
 }
 
 /// Every runnable example must exit 0 via the in-process JIT (`quilon run`) AND via
