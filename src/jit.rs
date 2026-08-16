@@ -53,96 +53,16 @@ pub fn run_program(program: &Program, types: TypeTable, args: &[String]) -> Resu
         .create_jit_execution_engine(OptimizationLevel::None)
         .map_err(|e| format!("Failed to create JIT execution engine: {}", e))?;
 
-    // Register the Rust-provided runtime intrinsics with the JIT. libc/libgc
-    // symbols (memcpy, GC_*) resolve from the host process automatically, but
-    // our `#[no_mangle]` Rust wrappers are not in the dynamic symbol table, so
-    // the JIT cannot find them via dlsym — map any the module declares to their
-    // in-process addresses. Without this, the generated `main` calls
-    // `__gc_init` at a null address and segfaults.
-    {
-        use crate::runtime::intrinsics;
-        let mappings: &[(&str, usize)] = &[
-            ("__gc_init", intrinsics::__gc_init as *const () as usize),
-            ("__exit", intrinsics::__exit as *const () as usize),
-            (
-                "__index_fail",
-                intrinsics::__index_fail as *const () as usize,
-            ),
-            ("__alloc", intrinsics::__alloc as *const () as usize),
-            (
-                "__text_length",
-                intrinsics::__text_length as *const () as usize,
-            ),
-            ("__text_cmp", intrinsics::__text_cmp as *const () as usize),
-            (
-                "__write_bytes",
-                intrinsics::__write_bytes as *const () as usize,
-            ),
-            (
-                "__print_text_fd",
-                intrinsics::__print_text_fd as *const () as usize,
-            ),
-            (
-                "__num_to_text",
-                intrinsics::__num_to_text as *const () as usize,
-            ),
-            (
-                "__bool_to_text",
-                intrinsics::__bool_to_text as *const () as usize,
-            ),
-            (
-                "__argv_to_text_array",
-                intrinsics::__argv_to_text_array as *const () as usize,
-            ),
-            (
-                "__envp_to_pairs",
-                intrinsics::__envp_to_pairs as *const () as usize,
-            ),
-            (
-                "__text_trim_start",
-                intrinsics::__text_trim_start as *const () as usize,
-            ),
-            (
-                "__text_trim_end",
-                intrinsics::__text_trim_end as *const () as usize,
-            ),
-            (
-                "__text_to_upper",
-                intrinsics::__text_to_upper as *const () as usize,
-            ),
-            (
-                "__text_to_lower",
-                intrinsics::__text_to_lower as *const () as usize,
-            ),
-            (
-                "__text_contains",
-                intrinsics::__text_contains as *const () as usize,
-            ),
-            (
-                "__text_index_of",
-                intrinsics::__text_index_of as *const () as usize,
-            ),
-            (
-                "__text_replace_all",
-                intrinsics::__text_replace_all as *const () as usize,
-            ),
-            (
-                "__text_replace_n",
-                intrinsics::__text_replace_n as *const () as usize,
-            ),
-            (
-                "__text_slice",
-                intrinsics::__text_slice as *const () as usize,
-            ),
-            (
-                "__text_split",
-                intrinsics::__text_split as *const () as usize,
-            ),
-        ];
-        for (name, addr) in mappings {
-            if let Some(func) = module.get_function(name) {
-                engine.add_global_mapping(&func, *addr);
-            }
+    // Register the Rust-provided runtime intrinsics with the JIT. libc/libgc symbols
+    // (memcpy, GC_*) resolve from the host process automatically, but our
+    // `#[no_mangle]` Rust wrappers are not in the dynamic symbol table, so the JIT
+    // cannot find them via dlsym — map any the module declares to its in-process
+    // address. Without this, the generated `main` calls `__gc_init` at a null address
+    // and segfaults. The addresses come from the runtime's own registry, so an
+    // intrinsic cannot be added there and forgotten here.
+    for (name, address) in crate::runtime::intrinsics::INTRINSICS {
+        if let Some(func) = module.get_function(name) {
+            engine.add_global_mapping(&func, *address as usize);
         }
     }
 

@@ -8,12 +8,25 @@ use super::*;
 
 impl<'ctx> CodeGenerator<'ctx> {
     /// Declare (once) and return an external runtime intrinsic by its
-    /// Quilon-internal name. These resolve to `#[no_mangle]` symbols in
-    /// `src/runtime/intrinsics.rs` (or libc, e.g. `memcpy`) — available both to
-    /// the in-process JIT and to AOT-linked executables.
+    /// Quilon-internal name. These resolve to the `#[no_mangle]` symbols the runtime
+    /// crate exports (or to libc, for `memcpy`) — reachable both from the in-process
+    /// JIT, which maps them by address, and from an AOT link against the archive.
+    ///
+    /// The name must be one the runtime actually exports. Declaring anything else would
+    /// emit a call that no link can resolve and no JIT mapping can fill, so the runtime's
+    /// own registry gates this: a prototype here for a symbol that does not exist cannot
+    /// be created in the first place. The signatures still live here, since building one
+    /// needs an LLVM context the runtime crate has no business holding; a test pins them
+    /// against the registry in the other direction.
     pub(super) fn get_intrinsic(&self, name: &str) -> Result<FunctionValue<'ctx>, String> {
         if let Some(f) = self.module.get_function(name) {
             return Ok(f);
+        }
+        // `memcpy` is libc's, not ours; everything else has to be in the registry.
+        if name != "memcpy" && !quilon_rt::INTRINSICS.iter().any(|(n, _)| *n == name) {
+            return Err(format!(
+                "Unknown runtime intrinsic: {name} — the runtime exports no such symbol"
+            ));
         }
         let ctx = self.context;
         let ptr = ctx.ptr_type(AddressSpace::default());
