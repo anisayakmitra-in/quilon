@@ -18,6 +18,7 @@ use inkwell::targets::{
 
 use crate::ast::Program;
 use crate::codegen::CodeGenerator;
+use crate::typechecker::TypeTable;
 
 /// The source needed to emit DWARF line-number debug info: the `.ql` file's path (recorded
 /// in the DWARF `DIFile`) and its text (to map span byte offsets to `(line, column)`).
@@ -35,6 +36,7 @@ pub struct DebugSource<'a> {
 /// is emitted (the `--debug` build mode); otherwise the object carries no debug info.
 fn emit_object(
     program: &Program,
+    types: TypeTable,
     obj_path: &Path,
     debug: Option<&DebugSource<'_>>,
 ) -> Result<(), String> {
@@ -42,8 +44,9 @@ fn emit_object(
         .map_err(|e| format!("Failed to initialize native target: {e}"))?;
 
     let context = Context::create();
-    // Build the generator with the type oracle installed (precise composite read types).
-    let mut generator = CodeGenerator::with_oracle(&context, "main", program)?;
+    // The type oracle comes from the front end's check (precise composite read types).
+    let mut generator = CodeGenerator::new(&context, "main");
+    generator.set_type_table(types);
     // Turn on DWARF line-number emission before codegen so every function/expression is
     // attributed to its `.ql` source location.
     if let Some(d) = debug {
@@ -190,12 +193,13 @@ fn runtime_lib_path() -> Result<PathBuf, String> {
 /// (`clang` or `gcc`) against `libquilon_rt` + Boehm GC.
 pub fn build_native(
     program: &Program,
+    types: TypeTable,
     out: &Path,
     linker: &str,
     debug: Option<&DebugSource<'_>>,
 ) -> Result<(), String> {
     let obj = out.with_extension("o");
-    emit_object(program, &obj, debug)?;
+    emit_object(program, types, &obj, debug)?;
     let rt_lib = runtime_lib_path()?;
 
     let status = Command::new(linker)

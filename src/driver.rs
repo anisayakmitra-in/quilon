@@ -41,17 +41,29 @@ impl FrontEndError {
     }
 }
 
-/// Read, lex, parse, resolve `<<` imports (relative to `file`'s directory), and
-/// type-check the program at `file`, returning the import-linked, checked program.
-pub fn front_end(file: &Path) -> Result<ast::Program, FrontEndError> {
-    Ok(front_end_detailed(file)?.0)
+/// A program that has passed the front end, together with what the later stages need
+/// from that pass.
+///
+/// `types` is the whole point of returning a struct: the type checker computes an
+/// inferred type for every expression, and codegen needs them to lower reads at their
+/// declared type. Recomputing that table means type-checking the program a second time,
+/// which is what this carries it here to avoid.
+pub struct Checked {
+    /// The import-linked, type-checked program.
+    pub program: ast::Program,
+    /// Every expression's inferred type, keyed by source position.
+    pub types: typechecker::TypeTable,
+    /// The source text of `file`, for mapping a span back to a line and column.
+    pub source: String,
+    /// How many leading items came from `<<` imports — `link` prepends them, so anything
+    /// before this index belongs to another file. A `--debug` build uses it to attribute
+    /// DWARF line info to the user's own source only.
+    pub imported_items: usize,
 }
 
-/// The checked program compiled from `file`, plus the source text and the count of leading
-/// imported-module items (import linking prepends them). The extras support the native
-/// `--debug` build, which needs the source (to map span byte offsets to `.ql` line/column)
-/// and the import boundary (to attribute DWARF line info only to the user's own file).
-pub fn front_end_detailed(file: &Path) -> Result<(ast::Program, String, usize), FrontEndError> {
+/// Read, lex, parse, resolve `<<` imports (relative to `file`'s directory), and
+/// type-check the program at `file`.
+pub fn front_end(file: &Path) -> Result<Checked, FrontEndError> {
     let path = file.display().to_string();
 
     let source = std::fs::read_to_string(file)
@@ -68,13 +80,18 @@ pub fn front_end_detailed(file: &Path) -> Result<(ast::Program, String, usize), 
     let base_dir = file.parent().unwrap_or_else(|| Path::new("."));
     let program = modules::link(program, base_dir).map_err(FrontEndError::plain)?;
     // `link` prepends imported items, so everything before the source's own items is imported.
-    let imported_count = program.items.len() - own_item_count;
+    let imported_items = program.items.len() - own_item_count;
 
-    typechecker::TypeChecker::new()
+    let types = typechecker::TypeChecker::new()
         .check_program(&program)
         .map_err(|e| FrontEndError::at(&path, &source, e.span(), &e.to_string()))?;
 
-    Ok((program, source, imported_count))
+    Ok(Checked {
+        program,
+        types,
+        source,
+        imported_items,
+    })
 }
 
 /// Whether `program` defines the `^` entry point required to build an executable.

@@ -25,8 +25,11 @@ fn assert_no_self_call(src: &str, callee: &str) {
     let context = inkwell::context::Context::create();
     let tokens = Lexer::tokenize(src).expect("lexing failed");
     let program = parser::parse(&tokens).expect("parsing failed");
-    let mut codegen = quilon::codegen::CodeGenerator::with_oracle(&context, "test", &program)
-        .expect("oracle setup failed");
+    let types = quilon::typechecker::TypeChecker::new()
+        .check_program(&program)
+        .expect("type checking failed");
+    let mut codegen = quilon::codegen::CodeGenerator::new(&context, "test");
+    codegen.set_type_table(types);
     let ir = codegen.generate(&program).expect("codegen failed");
     let self_calls = ir.matches(&format!("@{}(", callee)).count();
     // Exactly one mention with `(` — the initial call from `^`; the `define` line uses
@@ -52,8 +55,11 @@ fn assert_compiles_clean(src: &str) {
     let context = inkwell::context::Context::create();
     let tokens = Lexer::tokenize(src).expect("lexing failed");
     let program = parser::parse(&tokens).expect("parsing failed");
-    let mut codegen = quilon::codegen::CodeGenerator::with_oracle(&context, "test", &program)
-        .expect("oracle setup failed");
+    let types = quilon::typechecker::TypeChecker::new()
+        .check_program(&program)
+        .expect("type checking failed");
+    let mut codegen = quilon::codegen::CodeGenerator::new(&context, "test");
+    codegen.set_type_table(types);
     codegen
         .generate(&program)
         .expect("codegen / module verification failed");

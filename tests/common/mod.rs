@@ -14,7 +14,7 @@
 use quilon::jit;
 use quilon::lexer::Lexer;
 use quilon::parser;
-use quilon::typechecker::TypeChecker;
+use quilon::typechecker::{TypeChecker, TypeTable};
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -29,8 +29,9 @@ pub static JIT_LOCK: Mutex<()> = Mutex::new(());
 pub fn assert_exit(src: &str, expected: i32) {
     let _guard = JIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
 
-    let program = front_end(src, None);
-    let code = jit::run_program(&program, &["program".to_string()]).expect("execution failed");
+    let (program, types) = front_end(src, None);
+    let code =
+        jit::run_program(&program, types, &["program".to_string()]).expect("execution failed");
     assert_eq!(code, expected, "unexpected exit code for source:\n{src}");
 }
 
@@ -44,8 +45,9 @@ pub fn assert_exit_linked(src: &str, expected: i32) {
 pub fn assert_exit_linked_from(src: &str, base_dir: &Path, expected: i32) {
     let _guard = JIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
 
-    let program = front_end(src, Some(base_dir));
-    let code = jit::run_program(&program, &["program".to_string()]).expect("execution failed");
+    let (program, types) = front_end(src, Some(base_dir));
+    let code =
+        jit::run_program(&program, types, &["program".to_string()]).expect("execution failed");
     assert_eq!(code, expected, "unexpected exit code for source:\n{src}");
 }
 
@@ -62,16 +64,17 @@ pub fn assert_type_error(src: &str) {
 }
 
 /// Lex, parse, optionally resolve imports, and type-check — panicking with the stage
-/// that failed. Shared by the run helpers above.
-fn front_end(src: &str, base_dir: Option<&Path>) -> quilon::ast::Program {
+/// that failed. Returns the program with the type table its check produced, which is
+/// what codegen runs on. Shared by the run helpers above.
+fn front_end(src: &str, base_dir: Option<&Path>) -> (quilon::ast::Program, TypeTable) {
     let tokens = Lexer::tokenize(src).expect("lexing failed");
     let program = parser::parse(&tokens).expect("parsing failed");
     let program = match base_dir {
         Some(dir) => quilon::modules::link(program, dir).expect("import linking failed"),
         None => program,
     };
-    TypeChecker::new()
+    let types = TypeChecker::new()
         .check_program(&program)
         .expect("type checking failed");
-    program
+    (program, types)
 }
