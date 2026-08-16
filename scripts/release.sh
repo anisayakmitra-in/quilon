@@ -59,10 +59,10 @@ if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; the
 fi
 
 phase "Codename: looking up $VERSION in release-codenames.tsv"
-# Hitchhiker's-Guide-themed name for this release. Column 1 is a glob (e.g.
-# 0.9.* covers the whole 0.9 series), matched against the version. A missing row
-# is fine — the release simply carries no quoted name. release.yml resolves the
-# same table for the GitHub Release title; this must stay in sync with it.
+# Enderverse-themed name for this release. Column 1 is a glob matched against the
+# version (a literal version matches exactly). A missing row is fine — the
+# release simply carries no quoted name. release.yml resolves the same table for
+# the GitHub Release title; this must stay in sync with it.
 CODENAME=""
 if [[ -f release-codenames.tsv ]]; then
   CODENAME="$(awk -F'\t' -v v="$VERSION" '
