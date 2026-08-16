@@ -18,12 +18,27 @@ evergreen — the durable record that survives across contributors and AI-agent 
 | **M1** | Diagnostics & small wins (readable errors, `Unit` `$`, VS Code extension) | ✅ Complete |
 | **M2** | Type system (setters, user sum types `/`, ad-hoc overloading) | ✅ Complete |
 | **M3** | Closures & functional core | 🔨 In progress |
-| **M4** | Whole-program infra — monomorphization; authoritative types in codegen | ⬜ Planned |
-| **M5** | Implicit parallelism (CPU) — parallel array methods from inferred purity | ⬜ Planned |
-| **M6** | M:N green-thread runtime — transparent non-blocking IO | ⬜ Planned |
+| **M4** | Codegen infra — authoritative types in codegen (kept); monomorphization/defunctionalization deprioritized | ⬜ Planned (partly 💤) |
+| **M5** | ~~Implicit parallelism (CPU) — parallel array methods from inferred purity~~ | 💤 Deprioritized |
+| **M6** | **Concurrency runtime — colorless implicit futures ([#120]) — THE core deliverable.** Stage 1: single-threaded fibers + reactor; Stage 2: M:N work-stealing + cross-thread GC ([#98]) | ⬜ Planned — **core** |
 | **M7** | Polish — formatter/linter, standard library, debug info | ⬜ Planned |
+| **M8** | **Web — a native HTTP server built on the M6 runtime** | ⬜ Planned |
 
-Legend: ✅ complete · 🔨 in progress · ⬜ planned. **Critical path:** M4 → M5 → M6 (M6 is the long pole).
+Legend: ✅ complete · 🔨 in progress · ⬜ planned · 💤 deprioritized.
+
+**North star — _parallelism, then web_ (one spine).** Here "parallelism" means the
+**colorless concurrency runtime** (M6) — *not* auto data-parallel arrays — and "web" means a
+**native HTTP server built directly on that runtime** (M8). They are a single spine: the
+runtime is the core deliverable, and the web server sits on top of it.
+
+**Critical path:** M3 → **M6** (the concurrency runtime) → **M8** (web). M4's
+monomorphization line and all of M5 are **deprioritized** and off the critical path — they
+served an auto-data-parallelism goal the project no longer pursues.
+
+[#120]: https://github.com/assapir/quilon/issues/120
+[#98]: https://github.com/assapir/quilon/issues/98
+[#60]: https://github.com/assapir/quilon/issues/60
+[#49]: https://github.com/assapir/quilon/issues/49
 
 ### M1 — Diagnostics & small wins ✅
 
@@ -58,27 +73,38 @@ Legend: ✅ complete · 🔨 in progress · ⬜ planned. **Critical path:** M4 �
 | Concrete `Result` payload typing | 🔨 |
 | `core.cli` module | ⬜ Planned (blocked on Text methods + Result-payload typing) |
 
-### M4 — Whole-program infra ⬜
+### M4 — Codegen infra ⬜
 
 | Item | Status |
 |------|--------|
-| Monomorphization + defunctionalization (function values statically visible) | ⬜ |
-| Authoritative types in codegen (retire the lossy `infer_type`; use the type-oracle) | ⬜ |
+| Authoritative types in codegen (retire the lossy `infer_type`; use the type-oracle) — generally useful, **kept** | ⬜ |
+| Monomorphization + defunctionalization (function values statically visible) — **deprioritized**: it served the auto-data-parallelism goal (M5), now dropped | 💤 |
 
-### M5 — Implicit parallelism (CPU) ⬜
+### M5 — Implicit parallelism (CPU) 💤 Deprioritized
+
+**Deprioritized — off the critical path.** This milestone chased *automatic* CPU
+data-parallelism over arrays (parallel `map`/`filter` inferred from purity). The project no
+longer pursues auto data-parallelism: on this roadmap "parallelism" now means the M6
+concurrency runtime, not parallel arrays. Kept here for history; if CPU data-parallelism
+ever returns it will be **explicit** (a someday `mapParallel`), never inferred.
 
 | Item | Status |
 |------|--------|
-| Inferred-purity analysis | ⬜ |
-| Parallel `map` / `filter` | ⬜ |
+| Inferred-purity analysis | 💤 |
+| Parallel `map` / `filter` | 💤 |
 
-### M6 — M:N green-thread runtime ⬜
+### M6 — Concurrency runtime: colorless implicit futures ⬜ (core deliverable)
+
+Quilon's north-star **"parallelism"**: the **colorless implicit-futures / promise-pipelining**
+model — `@` leaf IO primitives, deferred values that propagate as they flow, and forcing
+only at strict operations, so independent IO overlaps with nothing written. The design is
+locked in [`LANGUAGE.md`](../LANGUAGE.md#concurrency--colorless-implicit-futures-planned)
+and specified in full in [#120]. Built smallest-first:
 
 | Item | Status |
 |------|--------|
-| Single-threaded fibers + reactor | ⬜ |
-| Coroutine ↔ GC integration | ⬜ |
-| Cross-thread work-stealing | ⬜ |
+| **Stage 1** — single-threaded stackful fibers (`corosensei`) + IO reactor; `@` primitives, deferred values, force-at-strict-op | ⬜ |
+| **Stage 2** — M:N work-stealing scheduler + Boehm GC across threads ([#98]) | ⬜ |
 
 ### M7 — Polish ⬜
 
@@ -89,3 +115,15 @@ Legend: ✅ complete · 🔨 in progress · ⬜ planned. **Critical path:** M4 �
 | Debug info (→ real VS Code debugging) | ⬜ |
 | Optimization levels — `quilon build` debug vs release (O3) | ⬜ |
 | Hover docs — show a function's signature/docs on hover in the editor | ⬜ |
+
+### M8 — Web: a native HTTP server on the runtime ⬜
+
+The **"then web"** half of the north star: a native HTTP server built directly on the M6
+runtime, so many in-flight connections are cheap fibers with their IO overlapped implicitly.
+Its on-ramps:
+
+| Item | Status |
+|------|--------|
+| Reactor-backed input/IO — reading stdin/files/sockets, not just printing ([#60]) | ⬜ |
+| Statically-linked `libgc` for a self-contained server binary ([#49]) | ⬜ |
+| Native HTTP server on the runtime | ⬜ |
