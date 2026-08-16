@@ -31,3 +31,10 @@ flate2 = "1.1"
 [build-dependencies]
 # Compressing `libquilon_rt.a` before it is embedded into the compiler binary.
 flate2 = "1.1"
+
+# The compile-speed benchmark (`cargo bench`). Hand-timed rather than criterion: it
+# reports one number per phase per corpus for trend tracking, which needs neither
+# sampling machinery nor a dependency, and stays fast enough to run on every PR.
+[[bench]]
+name = "compile_speed"
+harness = false

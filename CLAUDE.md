@@ -17,10 +17,16 @@ cargo build              # debug build
 cargo build --release    # release build (binary at target/release/quilon)
 cargo test               # full suite (lexer, parser, checker, codegen, module, run, sum)
 cargo test test_name     # a single test by name
+cargo bench              # compile-speed benchmark: per-phase timings over generated corpora
 cargo test --test run_test   # one test file (e.g. the JIT exit-code tests)
 ```
 
 Requires **LLVM 22** (for `inkwell`) and the system's **dynamic `libgc`** (Boehm GC) installed; CI installs `llvm-22-dev libpolly-22-dev libgc-dev`. (A static/vendored GC is a post-0.9 goal.)
+
+The benchmark prints a table (lex / parse / link / check / codegen / total, per corpus)
+and asserts nothing — CI publishes it to the job summary so regressions show up as a
+column growing over time. Add a corpus in `benches/compile_speed.rs` when a change has a
+cost profile the existing four don't cover.
 
 **Strict CI:** the workflow fails on any warning — it runs `cargo fmt --all -- --check`, `cargo clippy --all-targets --all-features -- -D warnings`, and `cargo build`/`cargo test` under `RUSTFLAGS=-D warnings`. Keep changes warning-clean.
 
