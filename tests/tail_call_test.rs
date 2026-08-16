@@ -10,32 +10,17 @@
 //! tail calls reached through `?`/`|` match arms and nested `< >` blocks (the subtle
 //! part), and that non-tail self-calls are left as ordinary recursion.
 
-use quilon::jit;
 use quilon::lexer::Lexer;
 use quilon::parser;
-use quilon::typechecker::TypeChecker;
-use std::sync::Mutex;
-
-// LLVM's JIT / native-target init isn't thread-safe; cargo runs tests in parallel.
-static JIT_LOCK: Mutex<()> = Mutex::new(());
-
-/// Compile and run `src`, asserting the entry point yields `expected`.
-fn assert_exit(src: &str, expected: i32) {
-    let _guard = JIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    let tokens = Lexer::tokenize(src).expect("lexing failed");
-    let program = parser::parse(&tokens).expect("parsing failed");
-    TypeChecker::new()
-        .check_program(&program)
-        .expect("type checking failed");
-    let code = jit::run_program(&program, &["program".to_string()]).expect("execution failed");
-    assert_eq!(code, expected, "unexpected exit code for source:\n{}", src);
-}
 
 /// Assert the generated IR for `src` contains no recursive `call` to `callee` — i.e.
 /// the self-recursion was lowered to a loop (a back-edge branch), not a stack call.
 /// (The IR still names the function in its `define` line and at the initial call from
 /// `^`; we check there is no `call <ret> @callee(` inside `callee` itself by counting:
 /// the only legitimate `call ... @callee(` is the one in `^`.)
+mod common;
+use common::assert_exit;
+
 fn assert_no_self_call(src: &str, callee: &str) {
     let context = inkwell::context::Context::create();
     let tokens = Lexer::tokenize(src).expect("lexing failed");

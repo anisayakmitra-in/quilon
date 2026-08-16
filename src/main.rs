@@ -1,14 +1,4 @@
-mod ast;
-mod build;
-mod codegen;
-mod diagnostic;
-mod driver;
-mod jit;
-mod lexer;
-mod modules;
-mod parser;
-mod runtime;
-mod typechecker;
+use quilon::{ast, build, codegen, driver, jit};
 
 use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};

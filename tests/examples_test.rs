@@ -3,35 +3,16 @@
 //! (via `<< core.test`) and exits 0. Running under `cargo test`, this is the CI gate
 //! that stops examples from rotting as the language evolves.
 
-use quilon::ast::Program;
-use quilon::lexer::Lexer;
-use quilon::parser;
-use quilon::typechecker::TypeChecker;
-use quilon::{jit, modules};
+use quilon::driver::front_end;
+use quilon::jit;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Mutex;
 
-// LLVM JIT / target init isn't thread-safe; cargo runs tests in parallel.
-static JIT_LOCK: Mutex<()> = Mutex::new(());
+mod common;
+use common::JIT_LOCK;
 
 fn examples_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("examples")
-}
-
-/// The full front-end (read -> lex -> parse -> resolve `<<` imports -> typecheck),
-/// returning the import-linked program. Mirrors `driver::front_end` (which lives in
-/// the binary, not the lib crate).
-fn front_end(path: &Path) -> Result<Program, String> {
-    let src = std::fs::read_to_string(path).map_err(|e| format!("read: {e}"))?;
-    let tokens = Lexer::tokenize(&src).map_err(|e| format!("lex: {e}"))?;
-    let program = parser::parse(&tokens).map_err(|e| format!("parse: {e}"))?;
-    let base = path.parent().unwrap_or_else(|| Path::new("."));
-    let linked = modules::link(program, base).map_err(|e| format!("import: {e}"))?;
-    TypeChecker::new()
-        .check_program(&linked)
-        .map_err(|e| format!("type: {e}"))?;
-    Ok(linked)
 }
 
 /// Examples that are intentionally rejected by the compiler (negative examples).
@@ -78,12 +59,9 @@ fn all_examples_compile() {
                 result.is_err(),
                 "{name} is a negative example but compiled cleanly"
             );
-        } else {
-            assert!(
-                result.is_ok(),
-                "{name} failed to compile: {:?}",
-                result.err()
-            );
+        } else if let Err(e) = result {
+            // `FrontEndError` renders as the diagnostic the CLI would print.
+            panic!("{name} failed to compile: {e}");
         }
     }
 }

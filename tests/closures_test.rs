@@ -4,38 +4,12 @@
 // the full pipeline (lex -> parse -> typecheck -> codegen -> JIT) and asserts the real
 // exit code, the same backbone as run_test.rs.
 
-use quilon::jit;
-use quilon::lexer::Lexer;
-use quilon::parser;
-use quilon::typechecker::TypeChecker;
-use std::sync::Mutex;
-
-// LLVM JIT / native-target init is not thread-safe; serialize across parallel tests.
-static JIT_LOCK: Mutex<()> = Mutex::new(());
-
-fn assert_exit(src: &str, expected: i32) {
-    let _guard = JIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    let tokens = Lexer::tokenize(src).expect("lexing failed");
-    let program = parser::parse(&tokens).expect("parsing failed");
-    TypeChecker::new()
-        .check_program(&program)
-        .expect("type checking failed");
-    let code = jit::run_program(&program, &["program".to_string()]).expect("execution failed");
-    assert_eq!(code, expected, "unexpected exit code for source:\n{}", src);
-}
-
-fn assert_type_error(src: &str) {
-    let tokens = Lexer::tokenize(src).expect("lexing failed");
-    let program = parser::parse(&tokens).expect("parsing failed");
-    assert!(
-        TypeChecker::new().check_program(&program).is_err(),
-        "expected a type error for source:\n{}",
-        src
-    );
-}
-
 // --- `:=` capture is by reference: writes from inside the closure escape and accumulate
 //     across separate calls (it shares one cell with the enclosing frame). ---
+
+mod common;
+use common::{assert_exit, assert_type_error};
+
 #[test]
 fn mutable_capture_counter_accumulates() {
     // `count` is `:=`, captured by reference. Each `bump(...)` writes the shared cell, so

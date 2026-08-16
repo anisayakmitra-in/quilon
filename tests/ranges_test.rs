@@ -6,31 +6,11 @@
 // full pipeline (lex ->
 // parse -> typecheck -> codegen -> JIT) and assert the real exit code.
 
-use quilon::jit;
-use quilon::lexer::Lexer;
-use quilon::parser;
-use quilon::typechecker::TypeChecker;
-use std::sync::Mutex;
-
-// LLVM JIT / target init isn't thread-safe; cargo runs tests in parallel.
-static JIT_LOCK: Mutex<()> = Mutex::new(());
-
-fn assert_exit(src: &str, expected: i32) {
-    let _guard = JIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-
-    let tokens = Lexer::tokenize(src).expect("lexing failed");
-    let program = parser::parse(&tokens).expect("parsing failed");
-    let mut checker = TypeChecker::new();
-    checker
-        .check_program(&program)
-        .expect("type checking failed");
-
-    let code = jit::run_program(&program, &["program".to_string()]).expect("execution failed");
-    assert_eq!(code, expected, "unexpected exit code for source:\n{}", src);
-}
-
 /// `(1 <- 4).size == 4` — an inclusive range has `|hi - lo| + 1` elements.
 /// (`.size` needs a named receiver in 0.9, so bind the range first.)
+mod common;
+use common::assert_exit;
+
 #[test]
 fn range_size_is_inclusive() {
     assert_exit("^ = () -> Num => <\n  r = 1 <- 4\n  r.size\n>", 4);

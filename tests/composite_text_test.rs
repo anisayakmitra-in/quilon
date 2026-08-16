@@ -7,27 +7,10 @@
 // JIT) asserting the real exit code, so a corrupted value would surface as a wrong
 // (often garbage) exit status.
 
-use quilon::jit;
-use quilon::lexer::Lexer;
-use quilon::parser;
-use quilon::typechecker::TypeChecker;
-use std::sync::Mutex;
-
-// LLVM JIT / target init isn't thread-safe; serialize across cargo's parallel tests.
-static JIT_LOCK: Mutex<()> = Mutex::new(());
-
-fn assert_exit(src: &str, expected: i32) {
-    let _guard = JIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    let tokens = Lexer::tokenize(src).expect("lexing failed");
-    let program = parser::parse(&tokens).expect("parsing failed");
-    TypeChecker::new()
-        .check_program(&program)
-        .expect("type checking failed");
-    let code = jit::run_program(&program, &["program".to_string()]).expect("execution failed");
-    assert_eq!(code, expected, "unexpected exit code for source:\n{src}");
-}
-
 // --- Text field inside a record -------------------------------------------------
+
+mod common;
+use common::{assert_exit, assert_type_error};
 
 #[test]
 fn record_text_field_reads_back_as_text() {
@@ -230,17 +213,6 @@ fn match_returning_text_then_measured() {
 // also as an overloaded-call argument and across function boundaries. These assert the
 // bind-and-USE behavior for every payload kind and the three flows that previously
 // failed (overload misdispatch, inferred-return, generic `-> Result` annotation).
-
-/// Assert `src` is REJECTED by the type checker (a negative/edge case).
-fn assert_type_error(src: &str) {
-    let tokens = Lexer::tokenize(src).expect("lexing failed");
-    let program = parser::parse(&tokens).expect("parsing failed");
-    let result = TypeChecker::new().check_program(&program);
-    assert!(
-        result.is_err(),
-        "expected a type error but checking succeeded for source:\n{src}"
-    );
-}
 
 #[test]
 fn ok_text_payload_dispatches_overload_by_concrete_type() {

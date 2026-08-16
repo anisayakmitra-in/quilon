@@ -11,45 +11,17 @@
 // ones.
 
 use quilon::ast::Expr;
-use quilon::jit;
 use quilon::lexer::Lexer;
 use quilon::parser;
-use quilon::typechecker::TypeChecker;
-use std::sync::Mutex;
-
-// LLVM JIT / target init isn't thread-safe; cargo runs tests in parallel.
-static JIT_LOCK: Mutex<()> = Mutex::new(());
-
-fn assert_exit(src: &str, expected: i32) {
-    let _guard = JIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-
-    let tokens = Lexer::tokenize(src).expect("lexing failed");
-    let program = parser::parse(&tokens).expect("parsing failed");
-    let mut checker = TypeChecker::new();
-    checker
-        .check_program(&program)
-        .expect("type checking failed");
-
-    let code = jit::run_program(&program, &["program".to_string()]).expect("execution failed");
-    assert_eq!(code, expected, "unexpected exit code for source:\n{}", src);
-}
-
-fn assert_type_error(src: &str) {
-    let tokens = Lexer::tokenize(src).expect("lexing failed");
-    let program = parser::parse(&tokens).expect("parsing failed");
-    let mut checker = TypeChecker::new();
-    assert!(
-        checker.check_program(&program).is_err(),
-        "expected a type error for source:\n{}",
-        src
-    );
-}
 
 // ---------------------------------------------------------------------------
 // Parser-level disambiguation: same `<-` token, two meanings, by position.
 // ---------------------------------------------------------------------------
 
 /// Parse the initializer expression of the single `x = <expr>` binding in `src`.
+mod common;
+use common::{assert_exit, assert_type_error};
+
 fn parse_binding_value(src: &str) -> Expr {
     use quilon::ast::{Item, Statement};
     let tokens = Lexer::tokenize(src).expect("lexing failed");
