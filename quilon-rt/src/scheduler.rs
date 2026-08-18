@@ -43,6 +43,12 @@ enum Park {
     /// map the token back to this fiber when it fires. Source-agnostic: a socket
     /// today, files/pipes later.
     Readiness(Token),
+    /// Park until the promise cell at this address is fulfilled by another fiber.
+    /// Backs `__force_text`: forcing a deferred value whose producing fiber has not
+    /// finished parks here; [`wake_promise`] re-readies the parked fiber(s) when the
+    /// producer stores its result. The address is the promise cell's identity, not a
+    /// dereferenced pointer — the scheduler only ever compares it.
+    Promise(usize),
 }
 
 type FiberCoroutine = Coroutine<(), Park, (), DefaultStack>;
@@ -65,6 +71,10 @@ struct Scheduler {
     /// Fibers parked on source readiness, keyed by the token they wait on. Exactly
     /// one fiber owns a token at a time (it owns the source), so this is 1:1.
     readiness_waiters: HashMap<Token, usize>,
+    /// Fibers parked on a promise, keyed by the promise cell's address. More than one
+    /// fiber may force the same deferred value, so this is 1:many — every waiter is
+    /// re-readied when the promise is fulfilled.
+    promise_waiters: HashMap<usize, Vec<usize>>,
 }
 
 impl Scheduler {
@@ -75,6 +85,7 @@ impl Scheduler {
             ready: VecDeque::new(),
             timers: Vec::new(),
             readiness_waiters: HashMap::new(),
+            promise_waiters: HashMap::new(),
         }
     }
 
@@ -173,6 +184,34 @@ pub(crate) fn park_on_readiness(token: Token) {
     CURRENT_YIELDER.set(yielder);
 }
 
+/// Park the current fiber until the promise cell at `address` is fulfilled. Backs
+/// forcing a deferred value: the caller re-checks the promise's state after every
+/// wake (a wake is an invitation to look, never a guarantee), so a spurious or
+/// shared wake simply re-parks. Must be called from within a fiber (panics otherwise).
+pub(crate) fn park_on_promise(address: usize) {
+    let yielder = CURRENT_YIELDER.get();
+    assert!(
+        !yielder.is_null(),
+        "park_on_promise() called outside a fiber"
+    );
+    // SAFETY: `yielder` points at the live `Yielder` for this fiber (see `sleep`).
+    unsafe { (*yielder).suspend(Park::Promise(address)) };
+    CURRENT_YIELDER.set(yielder);
+}
+
+/// Re-ready every fiber parked on the promise at `address` (its producer just stored
+/// the result). Called from the producing fiber right after it marks the promise
+/// ready. A no-op if nothing is waiting (the value was produced before any force).
+pub(crate) fn wake_promise(address: usize) {
+    with_scheduler(|scheduler| {
+        if let Some(waiters) = scheduler.promise_waiters.remove(&address) {
+            for id in waiters {
+                scheduler.ready.push_back(id);
+            }
+        }
+    });
+}
+
 /// Allocate a token and register `source` with the active reactor for `interest`.
 pub(crate) fn register_readiness(
     source: &mut impl Source,
@@ -254,6 +293,14 @@ pub fn run<F: FnOnce() + 'static>(main: F) {
                 CoroutineResult::Yield(Park::Readiness(token)) => with_scheduler(|scheduler| {
                     scheduler.fibers[id] = Some(fiber);
                     scheduler.readiness_waiters.insert(token, id);
+                }),
+                CoroutineResult::Yield(Park::Promise(address)) => with_scheduler(|scheduler| {
+                    scheduler.fibers[id] = Some(fiber);
+                    scheduler
+                        .promise_waiters
+                        .entry(address)
+                        .or_default()
+                        .push(id);
                 }),
                 CoroutineResult::Return(()) => {
                     // Unregister the stack range before dropping the fiber, which
