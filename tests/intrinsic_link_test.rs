@@ -42,11 +42,9 @@ const EVERY_INTRINSIC: &str = r#"
 << core.time
 
 ^ = (args :: []Text, env :: [][]Text) -> $ => <
-  ~ The deferral intrinsics: __sleep_launch (launch), __force_num (force at `+`),
-  ~ __scope_enter/__scope_join (this block's join), __run_fiber_main (the entry runs
-  ~ on a scheduler fiber because deferral is used).
-  slept = @sleep(0)
-  assertEq(slept + 0, 0)
+  ~ __sleep (the @sleep leaf primitive) and __run_fiber_main (the entry runs on a
+  ~ scheduler fiber because an @ primitive is used).
+  @sleep(0)
 
   ~ __argv_to_text_array / __envp_to_pairs come from these parameters existing.
   assert(args.size >= 1)

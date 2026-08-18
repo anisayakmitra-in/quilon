@@ -271,8 +271,9 @@ impl<'ctx> CodeGenerator<'ctx> {
 
     pub(super) fn generate_function_decl(&mut self, decl: &FunctionDecl) -> Result<(), String> {
         // The inert core.io print/eprint placeholder is never emitted (the compiler
-        // lowers print/eprint to runtime intrinsics).
-        if decl.is_inert_io_placeholder() {
+        // lowers print/eprint to runtime intrinsics). A leaf `@` primitive (`@sleep`) is
+        // likewise a corelib placeholder lowered to a runtime intrinsic at its call site.
+        if decl.is_inert_io_placeholder() || decl.name.starts_with('@') {
             return Ok(());
         }
 
@@ -457,11 +458,6 @@ impl<'ctx> CodeGenerator<'ctx> {
         } else {
             self.generate_expr(&decl.body)?
         };
-
-        // A function's return is strict: a deferred body value is forced before returning,
-        // so deferral never crosses the return boundary (the return type is the concrete
-        // one). A no-op for ready values, so pure functions are unchanged.
-        let body_value = self.force_value(body_value, self.defer.is_deferred(&decl.body))?;
 
         // Entry point `^`: if the body's value isn't a Num (f64) — e.g. a side-effecting
         // main ending in a Text/Bool/record expression — discard it and implicitly

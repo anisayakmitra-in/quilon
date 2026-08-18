@@ -118,15 +118,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                 ],
                 false,
             ),
-            // ptr __sleep_launch(double ms) — launch the deferring `@sleep` primitive:
-            // spawn a task fiber and return a `Deferred` handle immediately (no block).
-            "__sleep_launch" => ptr.fn_type(&[f64t.into()], false),
-            // double __force_num(ptr deferred) — force a deferred `Num`: park until its
-            // task finishes, then read the memoized value (idempotent when ready).
-            "__force_num" => f64t.fn_type(&[ptr.into()], false),
-            // void __scope_enter() / void __scope_join() — bracket a `< >` block so it
-            // joins every task it launched before returning (structured concurrency).
-            "__scope_enter" | "__scope_join" => void.fn_type(&[], false),
+            // void __sleep(double secs) — the `@sleep` leaf IO primitive: pause the current
+            // fiber for `secs` seconds, then continue.
+            "__sleep" => void.fn_type(&[f64t.into()], false),
             // i32 __run_fiber_main(ptr entry, i32 argc, ptr argv, ptr envp) — run the
             // generated entry thunk (the C `main` signature) on a scheduler fiber, so any
             // `@` primitive it reaches has a fiber to park on. Returns the exit code.

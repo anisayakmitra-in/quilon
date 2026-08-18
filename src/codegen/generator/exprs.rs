@@ -202,11 +202,8 @@ impl<'ctx> CodeGenerator<'ctx> {
             return self.generate_short_circuit(op, left, right);
         }
 
-        // Arithmetic and comparison are strict: an operand that is a deferred value is
-        // forced to its concrete representation here (a no-op for ready values, so pure
-        // code is unchanged). This is the arithmetic/comparison force-set frontier.
-        let lhs = self.generate_forced(left)?;
-        let rhs = self.generate_forced(right)?;
+        let lhs = self.generate_expr(left)?;
+        let rhs = self.generate_expr(right)?;
 
         // Text comparison: both operands are `Text` { ptr, i64 } structs. Lower
         // equality and lexicographic ordering via the `__text_cmp` runtime intrinsic
@@ -459,8 +456,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         op: UnaryOp,
         expr: &Expr,
     ) -> Result<BasicValueEnum<'ctx>, String> {
-        // Unary `-`/`!` read the operand's bits, so a deferred operand is forced here.
-        let val = self.generate_forced(expr)?;
+        let val = self.generate_expr(expr)?;
 
         match op {
             UnaryOp::Neg => {
@@ -553,14 +549,6 @@ impl<'ctx> CodeGenerator<'ctx> {
         let saved_scope = self.begin_di_lexical_block(span);
         let mut result = self.context.f64_type().const_float(0.0).into();
 
-        // Structured concurrency: a `< >`/`{ }` block joins every task launched directly
-        // inside it before it returns, so a launched effect never silently vanishes. Only
-        // emitted when the program uses deferral (else pure blocks are byte-identical).
-        let scoped = self.defer.uses_deferral;
-        if scoped {
-            self.emit_scope_call("__scope_enter")?;
-        }
-
         for stmt in stmts {
             match stmt {
                 crate::ast::Statement::Item(item) => {
@@ -570,12 +558,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                     result = self.generate_expr(expr)?;
                 }
             }
-        }
-
-        // Join pending launches AFTER computing the block's value (so a value forced by
-        // the block body is already ready) and before returning it.
-        if scoped {
-            self.emit_scope_call("__scope_join")?;
         }
 
         self.end_di_scope(saved_scope);

@@ -41,12 +41,6 @@ enum Park {
     /// map the token back to this fiber when it fires. Source-agnostic: a socket
     /// today, files/pipes later.
     Readiness(Token),
-    /// Park until the fiber with this id finishes. Backs `join`: a fiber forcing a
-    /// deferred value parks on the task fiber that computes it. The task is still
-    /// live (a forcing fiber only parks when the deferred value is not yet ready, and
-    /// a task marks its value ready immediately before it returns), so its id still
-    /// names it when the scheduler records the waiter.
-    Join(usize),
 }
 
 type FiberCoroutine = Coroutine<(), Park, (), DefaultStack>;
@@ -69,10 +63,6 @@ struct Scheduler {
     /// Fibers parked on source readiness, keyed by the token they wait on. Exactly
     /// one fiber owns a token at a time (it owns the source), so this is 1:1.
     readiness_waiters: HashMap<Token, usize>,
-    /// Fibers parked on a task's completion, keyed by the task fiber's id. Several
-    /// fibers may join the same task (a deferred value forced from more than one
-    /// place), so this is 1:many. Drained onto the ready queue when the task returns.
-    join_waiters: HashMap<usize, Vec<usize>>,
 }
 
 impl Scheduler {
@@ -83,7 +73,6 @@ impl Scheduler {
             ready: VecDeque::new(),
             timers: Vec::new(),
             readiness_waiters: HashMap::new(),
-            join_waiters: HashMap::new(),
         }
     }
 
@@ -126,13 +115,6 @@ fn with_scheduler<R>(f: impl FnOnce(&mut Scheduler) -> R) -> R {
 /// first fiber) or from within a running fiber (to spawn children). Panics if no
 /// scheduler is active.
 pub fn spawn<F: FnOnce() + 'static>(f: F) {
-    spawn_returning(f);
-}
-
-/// Spawn `f` as a new fiber, enqueue it, and return its id. The id names the fiber
-/// for as long as it is live, so a [`join`] can park on it. Same semantics as
-/// [`spawn`]; the returned id is what makes a launched task joinable.
-pub fn spawn_returning<F: FnOnce() + 'static>(f: F) -> usize {
     let stack = DefaultStack::new(FIBER_STACK_SIZE).expect("failed to allocate fiber stack");
     let base = stack.base().get();
     let limit = stack.limit().get();
@@ -157,20 +139,7 @@ pub fn spawn_returning<F: FnOnce() + 'static>(f: F) -> usize {
         });
         scheduler.ready.push_back(id);
         gc::register(id, stack_low, stack_high);
-        id
-    })
-}
-
-/// Park the current fiber until the task fiber `task` finishes, yielding to the
-/// scheduler. Backs forcing a deferred value: the caller checks the value is not yet
-/// ready (so `task` has not returned), then parks here; the scheduler wakes it when
-/// `task` returns. Must be called from within a fiber (panics otherwise).
-pub fn join(task: usize) {
-    let yielder = CURRENT_YIELDER.get();
-    assert!(!yielder.is_null(), "join() called outside a fiber");
-    // SAFETY: `yielder` points at the live `Yielder` for this fiber (see `sleep`).
-    unsafe { (*yielder).suspend(Park::Join(task)) };
-    CURRENT_YIELDER.set(yielder);
+    });
 }
 
 /// Park the current fiber until `duration` elapses, yielding to the scheduler. Must
@@ -284,10 +253,6 @@ pub fn run<F: FnOnce() + 'static>(main: F) {
                     scheduler.fibers[id] = Some(fiber);
                     scheduler.readiness_waiters.insert(token, id);
                 }),
-                CoroutineResult::Yield(Park::Join(task)) => with_scheduler(|scheduler| {
-                    scheduler.fibers[id] = Some(fiber);
-                    scheduler.join_waiters.entry(task).or_default().push(id);
-                }),
                 CoroutineResult::Return(()) => {
                     // Unregister the stack range before dropping the fiber, which
                     // unmaps its stack: never leave a range in the GC registry that
@@ -297,11 +262,6 @@ pub fn run<F: FnOnce() + 'static>(main: F) {
                     with_scheduler(|scheduler| {
                         scheduler.fibers[id] = None;
                         scheduler.free.push(id);
-                        // This fiber may have been a task others joined on; wake them.
-                        // They re-check the now-ready deferred value and read it.
-                        if let Some(waiters) = scheduler.join_waiters.remove(&id) {
-                            scheduler.ready.extend(waiters);
-                        }
                     });
                 }
             }
@@ -483,45 +443,6 @@ mod tests {
         });
 
         assert_eq!(*ORDER.lock().unwrap(), vec![10, 20, 40, 60]);
-    }
-
-    #[test]
-    fn independent_launches_overlap_and_force_to_their_values() {
-        // The deferred-value contract end to end: two `@sleep`-style launches started
-        // before either is forced run CONCURRENTLY (wall clock ≈ the longer sleep, not
-        // the sum), and forcing each returns the right memoized value regardless of
-        // force order. This is the runtime proof behind the language-level example.
-        use crate::defer::{__force_num, __sleep_launch};
-
-        static A: AtomicUsize = AtomicUsize::new(0);
-        static B: AtomicUsize = AtomicUsize::new(0);
-        static ELAPSED_MS: AtomicUsize = AtomicUsize::new(0);
-
-        on_gc_thread(|| {
-            run(|| {
-                let start = Instant::now();
-                // Launch both up front — neither parks the caller, so they overlap.
-                let a = __sleep_launch(50.0);
-                let b = __sleep_launch(50.0);
-                // Force in the opposite order to prove order-independence.
-                let vb = __force_num(b);
-                let va = __force_num(a);
-                A.store(va as usize, Ordering::SeqCst);
-                B.store(vb as usize, Ordering::SeqCst);
-                ELAPSED_MS.store(start.elapsed().as_millis() as usize, Ordering::SeqCst);
-            });
-        });
-
-        assert_eq!(A.load(Ordering::SeqCst), 50);
-        assert_eq!(B.load(Ordering::SeqCst), 50);
-        // Overlap: two 50 ms sleeps finish in well under their 100 ms sum. A generous
-        // ceiling keeps this robust on a loaded CI box while still failing if the two
-        // ran sequentially (~100 ms+).
-        assert!(
-            ELAPSED_MS.load(Ordering::SeqCst) < 90,
-            "two overlapping 50 ms launches took {} ms — they did not overlap",
-            ELAPSED_MS.load(Ordering::SeqCst)
-        );
     }
 
     #[test]

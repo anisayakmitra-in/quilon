@@ -1159,56 +1159,46 @@ fn run_overload_call_uses_the_member_defined_above_it() {
     );
 }
 
-// --- Deferred values (colorless implicit futures) ------------------------------------
+// --- The `@sleep` leaf IO primitive (concurrency runtime) ----------------------------
 //
-// `@sleep(ms)` launches a sleep and returns a *deferred* `Num` that forces to `ms`.
-// These assert CORRECTNESS of the deferral machinery through the JIT — deferred values
-// thread through bindings and force to the right result at the strict-operation frontier.
-// (Wall-clock overlap is proven by the runtime's own scheduler test; an exit code cannot
-// observe timing.) They import `core.time`, so they run through the linked front end.
+// `@sleep(secs) -> $` is an effect-only pause: it waits on the current fiber, then
+// execution continues in program order. These run a program that uses `@sleep` through the
+// full pipeline (front end + fiber scheduler) and assert it computes the right READY value
+// and exits cleanly — proving the pause runs and does not disturb ordinary evaluation.
+// They import `core.time`, so they go through the linked front end. Durations are tiny.
 
-/// Two independent launches, each bound, then forced together at the arithmetic frontier:
-/// the exit code is their summed values (10 + 20), proving both threaded through correctly.
+/// A `@sleep` statement runs (pausing the fiber) and the block then returns a ready value.
 #[test]
-fn run_deferred_two_launches_force_at_arithmetic() {
+fn run_sleep_pauses_then_returns_ready_value() {
     assert_exit_linked(
-        "<< core.time\n^ = () -> Num => <\n  a = @sleep(10)\n  b = @sleep(20)\n  a + b\n>",
-        30,
+        "<< core.time\n^ = () -> Num => <\n  @sleep(0.01)\n  6 * 7\n>",
+        42,
     );
 }
 
-/// A launch used directly as an operand (no binding) forces at the operator.
+/// Several sequential `@sleep` statements each run, and evaluation continues past them.
 #[test]
-fn run_deferred_direct_operands() {
-    assert_exit_linked("<< core.time\n^ = () -> Num => @sleep(15) + @sleep(5)", 20);
-}
-
-/// Deferral threads through plain rebindings and a value read more than once; the force
-/// is memoized, so `a` used twice launches once and both reads see the same value.
-#[test]
-fn run_deferred_threads_through_rebindings() {
+fn run_multiple_sleeps_run_in_order() {
     assert_exit_linked(
-        "<< core.time\n^ = () -> Num => <\n  a = @sleep(7)\n  b = a\n  b + a\n>",
-        14,
+        "<< core.time\n^ = () -> Num => <\n  @sleep(0.01)\n  @sleep(0.01)\n  @sleep(0.01)\n  5\n>",
+        5,
     );
 }
 
-/// A bound-but-never-used launch is joined by its enclosing `< >` block (structured
-/// concurrency: a launched effect never vanishes), and the block still returns its value.
+/// `@sleep` reached through an ordinary (unmarked) helper still runs on the entry fiber.
 #[test]
-fn run_deferred_unused_launch_is_scope_joined() {
+fn run_sleep_through_a_helper_function() {
     assert_exit_linked(
-        "<< core.time\n^ = () -> Num => <\n  x = @sleep(0)\n  9\n>",
-        9,
+        "<< core.time\nnap = () -> $ => @sleep(0.01)\n^ = () -> Num => <\n  nap()\n  3\n>",
+        3,
     );
 }
 
-/// A function whose body is a deferred value forces at its return, so deferral does not
-/// leak across the call boundary: the caller's arithmetic sees a ready `Num`.
+/// `@sleep` also composes as a statement inside an ordinary array-method iteration.
 #[test]
-fn run_deferred_forced_at_function_return() {
+fn run_sleep_inside_each_iteration() {
     assert_exit_linked(
-        "<< core.time\nnap = (ms :: Num) -> Num => @sleep(ms)\n^ = () -> Num => nap(12) + nap(9)",
-        21,
+        "<< core.time\n^ = () -> Num => <\n  [1, 2].each(n => @sleep(0.005))\n  8\n>",
+        8,
     );
 }
