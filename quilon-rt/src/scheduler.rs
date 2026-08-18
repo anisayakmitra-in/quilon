@@ -8,9 +8,9 @@
 //! primitive: called from inside a fiber, it parks the fiber with a deadline and
 //! yields to the scheduler.
 //!
-//! This tier is internal Rust today (no Quilon-visible `@` primitive yet); the
-//! surface arrives in a later step. The subtle fiber-stack GC scanning lives in
-//! [`crate::gc`].
+//! The subtle fiber-stack GC scanning lives in [`crate::gc`]. [`__run_fiber_main`] is the
+//! C-ABI wrapper the generated `main` calls to run a program's entry on this scheduler, so
+//! the `@` leaf IO primitives (e.g. `core.time`'s `@sleep`) have a fiber to park on.
 
 use crate::gc;
 use crate::reactor::Reactor;
@@ -22,7 +22,9 @@ use std::cell::Cell;
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::io;
+use std::os::raw::{c_char, c_int};
 use std::ptr;
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 /// Per-fiber stack size. corosensei's `DefaultStack` adds a low-end guard page and
@@ -301,6 +303,29 @@ pub fn run<F: FnOnce() + 'static>(main: F) {
 
     REACTOR.with(|r| *r.borrow_mut() = None);
     SCHEDULER.with(|s| *s.borrow_mut() = None);
+}
+
+/// The C-ABI entry the generated `main` calls to run a program's entry on this scheduler
+/// (only when the program uses an `@` primitive — pure programs call the entry directly,
+/// unchanged). `entry` is the generated `__ql_entry` thunk with the C `main` signature; its
+/// `i32` result is the program's exit code. Running the entry as the seed fiber gives any
+/// `@` primitive it reaches a fiber to park on.
+#[unsafe(no_mangle)]
+pub extern "C" fn __run_fiber_main(
+    entry: extern "C" fn(c_int, *const *const c_char, *const *const c_char) -> c_int,
+    argc: c_int,
+    argv: *const *const c_char,
+    envp: *const *const c_char,
+) -> c_int {
+    // The seed fiber writes its exit code out through a shared cell. `Rc<Cell<_>>` is
+    // `'static` (no borrow of a stack local) and `Clone`, which is all the closure needs:
+    // the tier is single-threaded, so no `Send`/synchronization is involved.
+    let code = Rc::new(Cell::new(0));
+    let code_writer = code.clone();
+    run(move || {
+        code_writer.set(entry(argc, argv, envp));
+    });
+    code.get()
 }
 
 /// One reactor wait servicing both clocks: block until `timeout` (the nearest sleep

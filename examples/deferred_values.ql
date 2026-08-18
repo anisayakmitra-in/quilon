@@ -1,21 +1,23 @@
 ~ Concurrency runtime — the `@sleep` leaf IO primitive (see docs/LANGUAGE.md).
-~ `@sleep(secs)` is an effect-only pause: used as a statement it waits right there on the
-~ current fiber, then execution continues in program order. It carries no value yet — the
-~ deferred-value / overlap story arrives with a value-returning primitive (`@read`). This
-~ example asserts CORRECTNESS: the code runs through the pauses and computes the right
-~ ready result. Self-asserting via core.test; exit 0 = pass.
+~ `@sleep(seconds)` is an effect-only pause: used as a statement it waits right there on
+~ the current fiber, then execution continues in program order. It carries no value yet —
+~ the deferred-value / overlap story arrives with a value-returning primitive (`@read`).
+~ `now()` reads a monotonic clock, so this example VERIFIES the pause actually waited: the
+~ elapsed time across the sleep is at least the requested duration. Self-asserting via
+~ core.test; exit 0 = pass.
 
 << core.test
 << core.time
 
-~ Pause twice (sequential), then compute a ready value.
-answerAfterPauses = () -> Num => <
-  @sleep(0.02)      ~ pause ~20ms
-  @sleep(0.02)      ~ pause again — waits here too
-  6 * 7             ~ ready arithmetic, evaluated after the pauses
->
-
 ^ = () -> Num => <
-  assertEq(answerAfterPauses(), 42)
+  start = now()
+  @sleep(0.05)                    ~ pause ~50ms
+  ~ A sleep waits AT LEAST its duration, so this bound is deterministic (never flaky).
+  assert(now() - start >= 0.05)
+
+  ~ Ordinary code runs after the pause, computing a ready value.
+  answer = 6 * 7
+  assertEq(answer, 42)
+
   0
 >

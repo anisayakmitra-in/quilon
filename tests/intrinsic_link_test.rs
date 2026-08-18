@@ -43,8 +43,9 @@ const EVERY_INTRINSIC: &str = r#"
 
 ^ = (args :: []Text, env :: [][]Text) -> $ => <
   ~ __sleep (the @sleep leaf primitive) and __run_fiber_main (the entry runs on a
-  ~ scheduler fiber because an @ primitive is used).
+  ~ scheduler fiber because an @ primitive is used), and __now (the plain clock read).
   @sleep(0)
+  assert(now() >= 0)
 
   ~ __argv_to_text_array / __envp_to_pairs come from these parameters existing.
   assert(args.size >= 1)

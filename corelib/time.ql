@@ -1,5 +1,10 @@
-~ core.time — time primitives. `@sleep` is a leaf IO primitive (the `@` marker),
-~ compiler-lowered to the runtime scheduler's sleep. Import with `<< core.time`.
+~ core.time — time primitives. `@sleep` is a leaf IO primitive (the `@` marker);
+~ `now` is a plain clock read. Both are compiler-lowered to runtime intrinsics.
+~ Import with `<< core.time`.
 
-~ Pause the current fiber for `secs` seconds (a fractional Num), then continue.
->> @sleep = (secs :: Num) -> $ => $
+~ Pause the current fiber for `seconds` seconds (a fractional Num), then continue.
+>> @sleep = (seconds :: Num) -> $ => $
+
+~ Seconds on a monotonic clock (a fractional Num). Only DIFFERENCES between two `now()`
+~ readings are meaningful — that is exactly what measures an elapsed duration.
+>> now = () -> Num => 0

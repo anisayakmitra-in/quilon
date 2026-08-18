@@ -576,14 +576,15 @@ impl<'ctx> CodeGenerator<'ctx> {
         let return_val = if self.defer.uses_deferral {
             let entry_fn = self.module.add_function("__ql_entry", main_type, None);
             let thunk_scope = self.begin_di_function(entry_fn, "__ql_entry", &main_span);
-            let t_argc = entry_fn.get_nth_param(0).unwrap().into_int_value();
-            let t_argv = entry_fn.get_nth_param(1).unwrap().into_pointer_value();
-            let t_envp = entry_fn.get_nth_param(2).unwrap().into_pointer_value();
-            let t_block = self.context.append_basic_block(entry_fn, "entry");
-            self.builder.position_at_end(t_block);
-            let rv = self.emit_entry_dispatch(entry_params, t_argc, t_argv, t_envp)?;
+            let thunk_argc = entry_fn.get_nth_param(0).unwrap().into_int_value();
+            let thunk_argv = entry_fn.get_nth_param(1).unwrap().into_pointer_value();
+            let thunk_envp = entry_fn.get_nth_param(2).unwrap().into_pointer_value();
+            let thunk_block = self.context.append_basic_block(entry_fn, "entry");
+            self.builder.position_at_end(thunk_block);
+            let exit_code =
+                self.emit_entry_dispatch(entry_params, thunk_argc, thunk_argv, thunk_envp)?;
             self.builder
-                .build_return(Some(&rv))
+                .build_return(Some(&exit_code))
                 .map_err(ctx("Failed to build entry-thunk return"))?;
             self.end_di_scope(thunk_scope);
 

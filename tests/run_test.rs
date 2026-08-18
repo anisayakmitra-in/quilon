@@ -1159,19 +1159,25 @@ fn run_overload_call_uses_the_member_defined_above_it() {
     );
 }
 
-// --- The `@sleep` leaf IO primitive (concurrency runtime) ----------------------------
+// --- The `core.time` primitives: `@sleep` (pause) and `now` (clock) ------------------
 //
-// `@sleep(secs) -> $` is an effect-only pause: it waits on the current fiber, then
-// execution continues in program order. These run a program that uses `@sleep` through the
-// full pipeline (front end + fiber scheduler) and assert it computes the right READY value
-// and exits cleanly — proving the pause runs and does not disturb ordinary evaluation.
-// They import `core.time`, so they go through the linked front end. Durations are tiny.
+// `@sleep(seconds) -> $` is an effect-only pause: it waits on the current fiber, then
+// execution continues in program order. `now()` reads a monotonic clock. These run a
+// program that uses them through the full pipeline (front end + fiber scheduler) and assert
+// it computes the right READY value and exits cleanly. They import `core.time`, so they go
+// through the linked front end. Durations are tiny.
 
 /// A `@sleep` statement runs (pausing the fiber) and the block then returns a ready value.
 #[test]
 fn run_sleep_pauses_then_returns_ready_value() {
     assert_exit_linked(
-        "<< core.time\n^ = () -> Num => <\n  @sleep(0.01)\n  6 * 7\n>",
+        r#"
+<< core.time
+^ = () -> Num => <
+  @sleep(0.01)
+  6 * 7
+>
+"#,
         42,
     );
 }
@@ -1180,7 +1186,15 @@ fn run_sleep_pauses_then_returns_ready_value() {
 #[test]
 fn run_multiple_sleeps_run_in_order() {
     assert_exit_linked(
-        "<< core.time\n^ = () -> Num => <\n  @sleep(0.01)\n  @sleep(0.01)\n  @sleep(0.01)\n  5\n>",
+        r#"
+<< core.time
+^ = () -> Num => <
+  @sleep(0.01)
+  @sleep(0.01)
+  @sleep(0.01)
+  5
+>
+"#,
         5,
     );
 }
@@ -1189,7 +1203,14 @@ fn run_multiple_sleeps_run_in_order() {
 #[test]
 fn run_sleep_through_a_helper_function() {
     assert_exit_linked(
-        "<< core.time\nnap = () -> $ => @sleep(0.01)\n^ = () -> Num => <\n  nap()\n  3\n>",
+        r#"
+<< core.time
+nap = () -> $ => @sleep(0.01)
+^ = () -> Num => <
+  nap()
+  3
+>
+"#,
         3,
     );
 }
@@ -1198,7 +1219,33 @@ fn run_sleep_through_a_helper_function() {
 #[test]
 fn run_sleep_inside_each_iteration() {
     assert_exit_linked(
-        "<< core.time\n^ = () -> Num => <\n  [1, 2].each(n => @sleep(0.005))\n  8\n>",
+        r#"
+<< core.time
+^ = () -> Num => <
+  [1, 2].each(n => @sleep(0.005))
+  8
+>
+"#,
         8,
+    );
+}
+
+/// `now()` deltas measure the pause: the elapsed time across a `@sleep` is at least the
+/// requested duration (a sleep waits AT LEAST its duration, so `>=` is deterministic). The
+/// program exits 0 only if `assert` held — genuine verification that the sleep waited.
+#[test]
+fn run_now_measures_that_sleep_actually_waited() {
+    assert_exit_linked(
+        r#"
+<< core.test
+<< core.time
+^ = () -> Num => <
+  start = now()
+  @sleep(0.05)
+  assert(now() - start >= 0.05)
+  0
+>
+"#,
+        0,
     );
 }
