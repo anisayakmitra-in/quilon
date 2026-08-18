@@ -1,6 +1,6 @@
 # Quilon
 
-**A statically-typed, symbol-based language that compiles to native code via LLVM.**
+**A statically-typed, symbol-based language that compiles to native and should make you laugh. Colorless implicit futures on cooperative fibers — concurrency follows data dependence, not program order.**
 
 Quilon (`.ql`) has no control-flow keywords — syntax is built from symbols (`^`, `<<`, `>>`, `|>`, `::`, `=>`, …). It targets native performance through LLVM with a small, unified type system.
 
