@@ -89,7 +89,7 @@ All notable changes to Quilon are documented here.
   the definition above this call`). A definition is still in scope for its own body, so
   self-recursion is unaffected; mutual recursion between top-level functions is not
   expressible (it never worked — it only appeared to type-check). See
-  `examples/overload_dispatch.ql` and LANGUAGE.md's "Names resolve top to bottom".
+  `examples/overload_dispatch.ql` and docs/LANGUAGE.md's "Names resolve top to bottom".
 
 ## 0.9.1 "Towel" — 2026-08-14 — "Stable basics, hardened"
 
