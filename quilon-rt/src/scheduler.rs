@@ -16,9 +16,12 @@ use crate::gc;
 use crate::reactor::Reactor;
 use corosensei::stack::{DefaultStack, Stack};
 use corosensei::{Coroutine, CoroutineResult, Yielder};
+use mio::event::Source;
+use mio::{Interest, Token};
 use std::cell::Cell;
 use std::cell::RefCell;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
+use std::io;
 use std::ptr;
 use std::time::{Duration, Instant};
 
@@ -33,6 +36,11 @@ const FIBER_STACK_SIZE: usize = 512 * 1024;
 enum Park {
     /// Park until `Instant`, then become ready again.
     Sleep(Instant),
+    /// Park until the reactor reports this token ready. The interest was already
+    /// (re)registered by the caller before it parked, so the scheduler only has to
+    /// map the token back to this fiber when it fires. Source-agnostic: a socket
+    /// today, files/pipes later.
+    Readiness(Token),
 }
 
 type FiberCoroutine = Coroutine<(), Park, (), DefaultStack>;
@@ -52,6 +60,9 @@ struct Scheduler {
     ready: VecDeque<usize>,
     /// Parked-on-sleep fibers: `(wake deadline, id)`.
     timers: Vec<(Instant, usize)>,
+    /// Fibers parked on source readiness, keyed by the token they wait on. Exactly
+    /// one fiber owns a token at a time (it owns the source), so this is 1:1.
+    readiness_waiters: HashMap<Token, usize>,
 }
 
 impl Scheduler {
@@ -61,6 +72,7 @@ impl Scheduler {
             free: Vec::new(),
             ready: VecDeque::new(),
             timers: Vec::new(),
+            readiness_waiters: HashMap::new(),
         }
     }
 
@@ -86,6 +98,11 @@ thread_local! {
     /// re-set by `sleep` after each resume (other fibers run in between and clobber
     /// this shared cell).
     static CURRENT_YIELDER: Cell<*const FiberYielder> = const { Cell::new(ptr::null()) };
+
+    /// The reactor for this thread's run. Lives here (not just as a `run` local) so
+    /// readiness ops in [`crate::net`], executing inside a fiber, can register and
+    /// (re)register their sources with the same `Poll` the scheduler waits on.
+    static REACTOR: RefCell<Option<Reactor>> = const { RefCell::new(None) };
 }
 
 /// Run `f` against the active scheduler. A short borrow only — never held across a
@@ -139,6 +156,61 @@ pub fn sleep(duration: Duration) {
     CURRENT_YIELDER.set(yielder);
 }
 
+/// Park the current fiber until the reactor reports `token` ready, yielding to the
+/// scheduler. The caller ([`crate::net`]) must have (re)registered the source for the
+/// interest it needs *before* calling this, so the readiness that wakes it is the one
+/// it is waiting for. Must be called from within a fiber (panics otherwise).
+pub(crate) fn park_on_readiness(token: Token) {
+    let yielder = CURRENT_YIELDER.get();
+    assert!(
+        !yielder.is_null(),
+        "park_on_readiness() called outside a fiber"
+    );
+    // SAFETY: `yielder` points at the live `Yielder` for this fiber (see `sleep`).
+    unsafe { (*yielder).suspend(Park::Readiness(token)) };
+    CURRENT_YIELDER.set(yielder);
+}
+
+/// Allocate a token and register `source` with the active reactor for `interest`.
+pub(crate) fn register_readiness(
+    source: &mut impl Source,
+    interest: Interest,
+) -> io::Result<Token> {
+    with_reactor(|reactor| {
+        let token = reactor.alloc_token();
+        reactor.register(source, token, interest)?;
+        Ok(token)
+    })
+}
+
+/// Change the interest `source` (already registered under `token`) is polled for.
+/// Called before every park so the reactor re-checks current readiness — this is what
+/// makes edge-triggered polling lose no wakeup between an op's `WouldBlock` and its
+/// park.
+pub(crate) fn reregister_readiness(
+    source: &mut impl Source,
+    token: Token,
+    interest: Interest,
+) -> io::Result<()> {
+    with_reactor(|reactor| reactor.reregister(source, token, interest))
+}
+
+/// Remove `source` from the reactor (on close/drop) so its token stops firing. A
+/// no-op if no reactor is active (e.g. a source outliving the scheduler run).
+pub(crate) fn deregister_readiness(source: &mut impl Source) {
+    REACTOR.with(|r| {
+        if let Some(reactor) = r.borrow().as_ref() {
+            let _ = reactor.deregister(source);
+        }
+    });
+}
+
+/// Run `f` against the active reactor. Borrowed only in short scopes, never across a
+/// `resume` or a park, so a resumed fiber may re-enter freely.
+fn with_reactor<R>(f: impl FnOnce(&mut Reactor) -> R) -> R {
+    REACTOR.with(|r| f(r.borrow_mut().as_mut().expect("no active reactor")))
+}
+
 /// Run the scheduler until every fiber has finished. Seeds `main` as the first
 /// fiber, then loops: drain the ready queue (resuming each fiber until it finishes
 /// or parks), block the reactor until the nearest wake deadline, and move due
@@ -153,7 +225,8 @@ pub fn run<F: FnOnce() + 'static>(main: F) {
     let already = SCHEDULER.with(|s| s.borrow().is_some());
     assert!(!already, "run() is not re-entrant");
     SCHEDULER.with(|s| *s.borrow_mut() = Some(Scheduler::new()));
-    let mut reactor = Reactor::new().expect("failed to create reactor");
+    let reactor = Reactor::new().expect("failed to create reactor");
+    REACTOR.with(|r| *r.borrow_mut() = Some(reactor));
 
     spawn(main);
 
@@ -176,6 +249,10 @@ pub fn run<F: FnOnce() + 'static>(main: F) {
                     scheduler.fibers[id] = Some(fiber);
                     scheduler.timers.push((deadline, id));
                 }),
+                CoroutineResult::Yield(Park::Readiness(token)) => with_scheduler(|scheduler| {
+                    scheduler.fibers[id] = Some(fiber);
+                    scheduler.readiness_waiters.insert(token, id);
+                }),
                 CoroutineResult::Return(()) => {
                     // Unregister the stack range before dropping the fiber, which
                     // unmaps its stack: never leave a range in the GC registry that
@@ -190,18 +267,21 @@ pub fn run<F: FnOnce() + 'static>(main: F) {
             }
         }
 
-        // Ready queue is empty: either everything finished, or fibers are parked.
-        let timeout = with_scheduler(|scheduler| {
-            scheduler
-                .timers
-                .iter()
-                .map(|(deadline, _)| *deadline)
-                .min()
-                .map(|next| next.saturating_duration_since(Instant::now()))
+        // Ready queue is empty: either everything finished, or fibers are parked on
+        // a timer, a source's readiness, or both. Compute the nearest timer as the
+        // poll timeout (`None` = block until a source fires); break only when nothing
+        // is parked.
+        let (next_deadline, readiness_parked) = with_scheduler(|scheduler| {
+            let next = scheduler.timers.iter().map(|(d, _)| *d).min();
+            (next, !scheduler.readiness_waiters.is_empty())
         });
-        match timeout {
-            None => break, // no ready fibers and no timers => all fibers done
-            Some(remaining) => reactor.wait(Some(remaining)),
+        match (next_deadline, readiness_parked) {
+            (None, false) => break, // nothing ready, nothing parked => all done
+            (Some(deadline), _) => {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                wait_and_wake(Some(remaining));
+            }
+            (None, true) => wait_and_wake(None),
         }
 
         // Move due timers back to ready.
@@ -219,7 +299,32 @@ pub fn run<F: FnOnce() + 'static>(main: F) {
         });
     }
 
+    REACTOR.with(|r| *r.borrow_mut() = None);
     SCHEDULER.with(|s| *s.borrow_mut() = None);
+}
+
+/// One reactor wait servicing both clocks: block until `timeout` (the nearest sleep
+/// deadline) or a source becomes ready, then move every fiber whose token fired back
+/// to the ready queue. Tokens with no waiter (already woken, or a stale event) are
+/// ignored. Ready tokens are collected before touching the scheduler so no reactor
+/// and scheduler borrow are held at once.
+fn wait_and_wake(timeout: Option<Duration>) {
+    let ready_tokens: Vec<Token> = REACTOR.with(|r| {
+        let mut reactor = r.borrow_mut();
+        let reactor = reactor.as_mut().expect("no active reactor");
+        reactor.wait(timeout);
+        reactor.ready_tokens().collect()
+    });
+    if ready_tokens.is_empty() {
+        return;
+    }
+    with_scheduler(|scheduler| {
+        for token in ready_tokens {
+            if let Some(id) = scheduler.readiness_waiters.remove(&token) {
+                scheduler.ready.push_back(id);
+            }
+        }
+    });
 }
 
 fn page_size() -> usize {

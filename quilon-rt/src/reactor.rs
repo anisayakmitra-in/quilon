@@ -1,17 +1,30 @@
 // SPDX-License-Identifier: GPL-2.0-only WITH Classpath-exception-2.0
 
-//! The reactor: a thin wrapper over a `mio` poll loop. Today it only provides a
-//! timed wait that drives the scheduler's wall clock (used by [`crate::sched`] to
-//! sleep until the nearest wake deadline). No I/O sources are registered yet;
-//! socket/file readiness driving fiber resume arrives with the `@` IO primitives.
+//! The reactor: a thin wrapper over a `mio` poll loop. It drives two kinds of
+//! readiness for the scheduler:
+//!
+//!  * timed waits — the nearest sleep deadline becomes the poll timeout, so the
+//!    scheduler wakes in time to resume due `sleep`ers; and
+//!  * source readiness — non-blocking sources (a TCP socket in [`crate::net`] today,
+//!    files/pipes later) are registered with a unique [`Token`]; when `poll` reports
+//!    a token ready the scheduler resumes the one fiber parked on it.
+//!
+//! A single `Poll::poll` services both: the timeout bounds how long it blocks, and
+//! any source that becomes ready before then returns it early. `EINTR` and spurious
+//! wakeups are harmless — the scheduler re-checks timers and only wakes fibers whose
+//! token actually fired.
 
-use mio::{Events, Poll};
+use mio::event::Source;
+use mio::{Events, Interest, Poll, Token};
 use std::io;
 use std::time::Duration;
 
 pub struct Reactor {
     poll: Poll,
     events: Events,
+    /// Monotonic token allocator. Tokens are never reused; a `usize` counter is
+    /// ample and keeps the token/fiber map unambiguous even after sources close.
+    next_token: usize,
 }
 
 impl Reactor {
@@ -19,16 +32,50 @@ impl Reactor {
         Ok(Self {
             poll: Poll::new()?,
             events: Events::with_capacity(64),
+            next_token: 0,
         })
     }
 
-    /// Block until `timeout` elapses (or, later, until a registered source is
-    /// ready). `None` blocks indefinitely; the scheduler only passes `None` when a
-    /// fiber is waiting on readiness with no deadline — for sleep-only workloads it
-    /// always passes a finite timeout. `EINTR` and spurious wakeups are harmless:
-    /// the scheduler re-checks timers after every wait.
+    /// Hand out a fresh, never-reused token for a new source.
+    pub fn alloc_token(&mut self) -> Token {
+        let token = Token(self.next_token);
+        self.next_token += 1;
+        token
+    }
+
+    pub fn register(
+        &self,
+        source: &mut impl Source,
+        token: Token,
+        interest: Interest,
+    ) -> io::Result<()> {
+        self.poll.registry().register(source, token, interest)
+    }
+
+    pub fn reregister(
+        &self,
+        source: &mut impl Source,
+        token: Token,
+        interest: Interest,
+    ) -> io::Result<()> {
+        self.poll.registry().reregister(source, token, interest)
+    }
+
+    pub fn deregister(&self, source: &mut impl Source) -> io::Result<()> {
+        self.poll.registry().deregister(source)
+    }
+
+    /// Block until `timeout` elapses or a registered source is ready. `None` blocks
+    /// indefinitely; the scheduler passes `None` only when fibers are parked on
+    /// source readiness with no pending timer.
     pub fn wait(&mut self, timeout: Option<Duration>) {
         self.events.clear();
         let _ = self.poll.poll(&mut self.events, timeout);
+    }
+
+    /// Tokens whose sources became ready in the last [`wait`](Self::wait). The
+    /// scheduler maps each back to the fiber parked on it.
+    pub fn ready_tokens(&self) -> impl Iterator<Item = Token> + '_ {
+        self.events.iter().map(|event| event.token())
     }
 }
