@@ -1,6 +1,6 @@
 # Quilon
 
-**Colorless implicit futures on cooperative fibers: IO returns type-invisible deferreds, only strict operations force them — concurrency follows data dependence, not program order.**
+**A statically-typed, symbol-based language that compiles to native and should bring joy. Colorless implicit futures on cooperative fibers — concurrency follows data dependence, not program order.**
 
 Quilon (`.ql`) has no control-flow keywords — syntax is built from symbols (`^`, `<<`, `>>`, `|>`, `::`, `=>`, …). It targets native performance through LLVM with a small, unified type system.
 
