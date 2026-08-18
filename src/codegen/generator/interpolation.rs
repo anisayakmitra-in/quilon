@@ -37,7 +37,9 @@ impl<'ctx> CodeGenerator<'ctx> {
     /// by string interpolation and `print`/`eprint`.
     pub(super) fn render_expr(&mut self, expr: &Expr) -> Result<BasicValueEnum<'ctx>, String> {
         let ty = self.infer_type(expr);
-        let value = self.generate_expr(expr)?;
+        // Rendering reads the value's concrete bits, so a deferred value is forced here
+        // (a no-op for ready values). This is the `print`/`eprint`/interpolation frontier.
+        let value = self.generate_forced(expr)?;
         // Break unbounded self-recursion: rendering the receiver `it` WHOLESALE inside its
         // own type's `` ` `` override would invoke that override forever. That one case
         // renders via the built-in default (the type name); a DIFFERENT value of the same

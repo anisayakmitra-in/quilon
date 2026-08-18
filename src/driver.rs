@@ -59,6 +59,10 @@ pub struct Checked {
     /// before this index belongs to another file. A `--debug` build uses it to attribute
     /// DWARF line info to the user's own source only.
     pub imported_items: usize,
+    /// The deferred-value coloring: which expressions evaluate to a deferred (promise)
+    /// value, and whether any `@` primitive launch is reachable. Codegen reads it to emit
+    /// the promise representation and forces; empty for pure programs.
+    pub defer: crate::deferral::DeferInfo,
 }
 
 /// Read, lex, parse, resolve `<<` imports (relative to `file`'s directory), and
@@ -104,11 +108,18 @@ pub fn front_end(file: &Path) -> Result<Checked, FrontEndError> {
         .check_program(&program)
         .map_err(|e| FrontEndError::at(&path, &source, e.span(), &e.to_string()))?;
 
+    // Color deferred values (post-typecheck, pre-codegen). Reads no types and adds none,
+    // so the check above is unaffected; it may reject a deferred value used in a position
+    // the current force-set does not yet cover.
+    let defer = crate::deferral::analyze(&program)
+        .map_err(|e| FrontEndError::at(&path, &source, e.span(), &e.to_string()))?;
+
     Ok(Checked {
         program,
         types,
         source,
         imported_items,
+        defer,
     })
 }
 

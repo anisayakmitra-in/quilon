@@ -458,6 +458,11 @@ impl<'ctx> CodeGenerator<'ctx> {
             self.generate_expr(&decl.body)?
         };
 
+        // A function's return is strict: a deferred body value is forced before returning,
+        // so deferral never crosses the return boundary (the return type is the concrete
+        // one). A no-op for ready values, so pure functions are unchanged.
+        let body_value = self.force_value(body_value, self.defer.is_deferred(&decl.body))?;
+
         // Entry point `^`: if the body's value isn't a Num (f64) — e.g. a side-effecting
         // main ending in a Text/Bool/record expression — discard it and implicitly
         // return 0 (C `main`-style success). A Num body is used as the exit code as

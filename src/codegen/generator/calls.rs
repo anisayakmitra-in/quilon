@@ -36,6 +36,13 @@ impl<'ctx> CodeGenerator<'ctx> {
             return Err("Only direct function calls supported".to_string());
         };
 
+        // A deferring `@` primitive (`@sleep`): launch it, yielding a deferred handle.
+        // Recognized by the `@` the parser fused into the name. Handled before every other
+        // dispatch — the name is not an overload/method/constructor.
+        if let Some(primitive) = func_name.strip_prefix('@') {
+            return self.generate_deferring_primitive(primitive, args);
+        }
+
         // Core IO builtins, lowered to runtime intrinsics (see runtime::intrinsics).
         // `print`/`eprint` are the built-in single-arg Num/Text/Bool overloads; a
         // *user* overload of the same name (a different signature) is dispatched as a
@@ -144,6 +151,76 @@ impl<'ctx> CodeGenerator<'ctx> {
             .collect::<Result<Vec<_>, _>>()?;
 
         self.emit_call(function, &arg_values)
+    }
+
+    /// Lower a deferring `@` primitive call to its runtime launch, yielding a *deferred*
+    /// value (a promise handle, represented as a pointer). The taint pass has marked this
+    /// call's span deferred, so callers reading it will `force` at their frontier. The
+    /// primitive's own value arguments are strict, so they are forced here.
+    fn generate_deferring_primitive(
+        &mut self,
+        primitive: &str,
+        args: &[Expr],
+    ) -> Result<BasicValueEnum<'ctx>, String> {
+        match primitive {
+            // `@sleep(ms :: Num) -> Num`: launch a sleep, return its deferred result.
+            "sleep" => {
+                if args.len() != 1 {
+                    return Err(format!("@sleep expects exactly 1 argument, got {}", args.len()));
+                }
+                let ms = self.generate_forced(&args[0])?;
+                let BasicValueEnum::FloatValue(ms) = ms else {
+                    return Err("@sleep expects a Num (milliseconds)".to_string());
+                };
+                let launch = self.get_intrinsic("__sleep_launch")?;
+                let call = self
+                    .builder
+                    .build_call(launch, &[ms.into()], "sleep_launch")
+                    .map_err(ctx("Failed to launch @sleep"))?;
+                Self::call_result_to_basic(call)
+            }
+            other => Err(format!("Unknown deferring primitive `@{other}`")),
+        }
+    }
+
+    /// Emit a call to a nullary `void` scope intrinsic (`__scope_enter`/`__scope_join`),
+    /// which brackets a `< >` block so it joins the tasks it launched.
+    pub(super) fn emit_scope_call(&mut self, name: &str) -> Result<(), String> {
+        let f = self.get_intrinsic(name)?;
+        self.builder
+            .build_call(f, &[], "")
+            .map_err(ctx("Failed to build scope call"))?;
+        Ok(())
+    }
+
+    /// Generate `expr`, then force it to a ready value if the taint pass colored it
+    /// deferred. A force reads the deferred `Num`'s memoized value (parking the fiber until
+    /// its launch completes); for a value that is not deferred this is exactly
+    /// `generate_expr`, so pure code is unchanged. Emitted at every force-set frontier.
+    pub(super) fn generate_forced(&mut self, expr: &Expr) -> Result<BasicValueEnum<'ctx>, String> {
+        let deferred = self.defer.is_deferred(expr);
+        let value = self.generate_expr(expr)?;
+        self.force_value(value, deferred)
+    }
+
+    /// Force `value` if `deferred`: call `__force_num` on the promise handle to get the
+    /// ready `Num`. A no-op when not deferred. Split from [`generate_forced`] so a caller
+    /// that already holds the value (e.g. a function's computed return value) can force it.
+    pub(super) fn force_value(
+        &mut self,
+        value: BasicValueEnum<'ctx>,
+        deferred: bool,
+    ) -> Result<BasicValueEnum<'ctx>, String> {
+        if !deferred {
+            return Ok(value);
+        }
+        let handle = value.into_pointer_value();
+        let force = self.get_intrinsic("__force_num")?;
+        let call = self
+            .builder
+            .build_call(force, &[handle.into()], "force")
+            .map_err(ctx("Failed to force deferred value"))?;
+        Self::call_result_to_basic(call)
     }
 
     /// Convert a call site's result to a `BasicValueEnum`, erroring if the callee returns
