@@ -34,6 +34,7 @@
 //! linking an AOT binary with gcc, pass `-lgc` explicitly (the `#[link]` directive
 //! only drives rustc's own links, not a downstream gcc invocation).
 
+pub mod defer;
 pub mod gc;
 pub mod io;
 pub mod mem;
@@ -43,6 +44,7 @@ pub mod reactor;
 pub mod scheduler;
 pub mod text;
 
+pub use defer::{__force_num, __run_fiber_main, __scope_enter, __scope_join, __sleep_launch};
 pub use io::{__print_text_fd, __write_bytes};
 pub use mem::{__alloc, __gc_init, __index_fail, GcThread, register_thread};
 pub use process::{__argv_to_text_array, __envp_to_pairs, __exit};
@@ -132,6 +134,16 @@ intrinsic_registry! {
     __text_replace_n: extern "C" fn(*const u8, i64, *const u8, i64, *const u8, i64, i64) -> QlSlice,
     __text_slice: extern "C" fn(*const u8, i64, i64, i64) -> QlSlice,
     __text_split: extern "C" fn(*const u8, i64, *const u8, i64) -> QlSlice,
+    __sleep_launch: extern "C" fn(f64) -> *mut defer::Deferred,
+    __force_num: extern "C" fn(*mut defer::Deferred) -> f64,
+    __scope_enter: extern "C" fn(),
+    __scope_join: extern "C" fn(),
+    __run_fiber_main: extern "C" fn(
+        extern "C" fn(c_int, *const *const c_char, *const *const c_char) -> c_int,
+        c_int,
+        *const *const c_char,
+        *const *const c_char,
+    ) -> c_int,
 }
 
 // Shared unit-test support. `GC_LOCK` is taken by GC-touching tests in more than one
