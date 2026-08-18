@@ -148,7 +148,7 @@ Both act on the file containing the lens.
 
 > The `quilon run` subcommand must exist in your toolchain. Depending on your
 > build it may instead be `compile` + manual `llc`/link — see the repo's
-> `CLAUDE.md` / `LANGUAGE.md`.
+> `CLAUDE.md` / `docs/LANGUAGE.md`.
 
 ## Diagnostics
 

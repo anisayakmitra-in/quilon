@@ -4,7 +4,7 @@ Guidance for Claude Code (claude.ai/code) when working in this repository.
 
 ## What this is
 
-Quilon is a compiler for a statically-typed, **symbol-based** language (`.ql` files) that compiles to native code via LLVM, written in Rust. It is at **0.9 — "stable basics"**: the core works end-to-end (verified by run tests), but it is not feature-complete. **`LANGUAGE.md` is the authoritative reference and feature matrix** — consult it for what's implemented; don't duplicate that list here.
+Quilon is a compiler for a statically-typed, **symbol-based** language (`.ql` files) that compiles to native code via LLVM, written in Rust. It is at **0.9 — "stable basics"**: the core works end-to-end (verified by run tests), but it is not feature-complete. **`docs/LANGUAGE.md` is the authoritative reference and feature matrix** — consult it for what's implemented; don't duplicate that list here.
 
 **Planning & process docs (read these when working toward 1.0):**
 - **`docs/ROADMAP.md`** — the authoritative plan: milestone roadmap (M1–M7 + status) and the locked language-design decisions (1–20). What's decided, done, and next. Do not relitigate a locked decision without asking the user.
@@ -80,14 +80,14 @@ Classic multi-pass pipeline; `src/driver.rs::front_end` wires the passes for the
 - A new feature usually touches **all of**: lexer (tokens), parser (`ast_parser.rs`), AST (`nodes.rs`), type checker (`checker.rs`), codegen (`generator.rs`) — in that order. Tests in `tests/` follow `tokenize → parse → check → generate → run`; the `run_test.rs` JIT harness asserting exit codes is the best end-to-end template.
 - Numbers are one unified `Num` type (`f64`); array indices/discriminants convert f64↔i64 in codegen.
 - Arrays and `Text` are both `{ ptr, i64 }` structs in LLVM (`Text` = `{ data, byte_len }`; arrays = `{ data, size }`). `Text` is a built-in type, no import.
-- Sum types (`Ok`/`NotOk`) are tagged unions (i8 tag + payload). `Num`/`Bool`/`Text` payloads all work end-to-end (`Ok(text)`), as does `Text` (and nested arrays) inside records/arrays — a pattern-bound payload carries its concrete type. What is **not** unified: different payload *types* in the same slot position across variants (e.g. `Num` in one variant, `Text` in another) is rejected — check `LANGUAGE.md` "Known limitations" and `tests/sum_*.rs` before assuming.
-- **No keywords** — symbol-based: `^` entry point, `<<` import, `>>` export, `|>` pipe (first-arg injection: `x |> f(a)` ≡ `f(x, a)`), `?`/`|`/`_` pattern matching, `? :` ternary, `~` comments. There is **no loop construct** — iterate with array methods (`.each`/`.map`/`.filter`/`.reduce`) and recursion (self-tail-calls are lowered to loops). Consult the symbol table in `LANGUAGE.md`.
+- Sum types (`Ok`/`NotOk`) are tagged unions (i8 tag + payload). `Num`/`Bool`/`Text` payloads all work end-to-end (`Ok(text)`), as does `Text` (and nested arrays) inside records/arrays — a pattern-bound payload carries its concrete type. What is **not** unified: different payload *types* in the same slot position across variants (e.g. `Num` in one variant, `Text` in another) is rejected — check `docs/LANGUAGE.md` "Known limitations" and `tests/sum_*.rs` before assuming.
+- **No keywords** — symbol-based: `^` entry point, `<<` import, `>>` export, `|>` pipe (first-arg injection: `x |> f(a)` ≡ `f(x, a)`), `?`/`|`/`_` pattern matching, `? :` ternary, `~` comments. There is **no loop construct** — iterate with array methods (`.each`/`.map`/`.filter`/`.reduce`) and recursion (self-tail-calls are lowered to loops). Consult the symbol table in `docs/LANGUAGE.md`.
 - I/O lives in the `core.io` module (`<< core.io`): `print`/`eprint`/`write`/`stdout`/`stderr`. There is no `println`. `print`/`eprint` are built-in **overload sets** over Num/Text/Bool (lowered to runtime intrinsics); a user definition adds an overload member.
 - **Overloading is ad-hoc and explicit** (the only polymorphism — no generics): 2+ same-named top-level defs with fully annotated signatures (every param **and** the return type), or an operator-symbol-named def, form an overload set; calls/operators resolve by **exact** static argument types (no coercion). Built-in operators (`+`, comparisons incl. `Text`) and `print` go through this same mechanism. Codegen mangles each member to a distinct symbol. `>` lexes as block-close only when line-final; otherwise it's the greater-than operator.
 - **No hoisting**: names resolve top to bottom, so a call only sees definitions above it (a definition is in scope for its own body, so self-recursion works; mutual recursion between top-level functions is not expressible). Overload members join their set as their definition is reached.
 
 ## Reference docs
 
-- `LANGUAGE.md` — authoritative language reference, syntax, and the ✅/🚧/❌ feature matrix. Keep it in sync when you change language behavior.
+- `docs/LANGUAGE.md` — authoritative language reference, syntax, and the ✅/🚧/❌ feature matrix. Keep it in sync when you change language behavior.
 - `README.md` — high-level pitch + aspirational vision (implicit parallelism, deep immutability — not yet built).
-- `examples/*.ql` — runnable programs referenced from `LANGUAGE.md`; each is exercised by the test suite. The `.ll`/`.o`/binary artifacts alongside them are gitignored.
+- `examples/*.ql` — runnable programs referenced from `docs/LANGUAGE.md`; each is exercised by the test suite. The `.ll`/`.o`/binary artifacts alongside them are gitignored.

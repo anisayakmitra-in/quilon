@@ -289,7 +289,7 @@ impl TypeChecker {
 
     /// Type-check a built-in `Text` method call. `args[0]` is the receiver (already
     /// known to be `Text`); the remaining args are the method's own arguments. Signatures
-    /// (see LANGUAGE.md):
+    /// (see docs/LANGUAGE.md):
     ///   - `split(sep :: Text)`                 -> `[]Text`
     ///   - `trim()` / `trimStart()` / `trimEnd()` / `toUpper()` / `toLower()` -> `Text`
     ///   - `replaceAll(from :: Text, to :: Text)` -> `Text`
