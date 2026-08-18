@@ -424,4 +424,37 @@ mod tests {
         // Only the launch is deferred (never read); scope-join forces it at runtime.
         assert_eq!(i.deferred.len(), 1);
     }
+
+    /// The load-bearing guardrail: deferral is **type-invisible**. Every expression this
+    /// pass colors deferred is recorded by the (unmodified) type checker as an ordinary
+    /// `Num` — there is no `Task`/`Future`/`Deferred` type. If deferral ever leaked into
+    /// the type system, a deferred expression's checker type would stop being a plain
+    /// `Num` and this fails.
+    #[test]
+    fn deferred_values_carry_ordinary_types_in_the_checker() {
+        use crate::modules;
+        use crate::typechecker::TypeChecker;
+        use std::path::Path;
+
+        let src = "<< core.time\n^ = () -> Num => <\n  a = @sleep(10)\n  b = @sleep(20)\n  a + b\n>";
+        let tokens = Lexer::tokenize(src).expect("lex");
+        let program = parser::parse(&tokens).expect("parse");
+        let program = modules::link(program, Path::new(".")).expect("link core.time");
+
+        let types = TypeChecker::new()
+            .check_program(&program)
+            .expect("type checking");
+        let info = analyze(&program).expect("analyze");
+
+        assert!(info.uses_deferral);
+        assert!(!info.deferred.is_empty());
+        for span in &info.deferred {
+            assert_eq!(
+                types.get(span),
+                Some(&crate::ast::Type::Num),
+                "a deferred expression must type as an ordinary Num (deferral is invisible \
+                 to the checker)"
+            );
+        }
+    }
 }

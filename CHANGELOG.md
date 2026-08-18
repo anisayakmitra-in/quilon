@@ -6,6 +6,26 @@ All notable changes to Quilon are documented here.
 
 ### Added
 
+- **Colorless implicit futures — first slice ([#120](https://github.com/assapir/quilon/issues/120)).**
+  Quilon's concurrency model becomes real: a deferring leaf IO primitive `@sleep`
+  (in the new `core.time` module) launches on its own fiber and returns a
+  *deferred* `Num` immediately, so two independent `@sleep` calls **overlap**
+  (three 200 ms sleeps finish in ~200 ms, not 600). Deferral is **type-invisible**
+  — a deferred `Num` still types as `Num`, so the type checker is byte-identical
+  and overload resolution is untouched — and is carried by a new pre-codegen
+  **deferred-taint pass**, not a `Task`/`Future` type. A deferred value threads
+  lazily through `=`/`:=` bindings and is **forced** (the fiber parks until ready,
+  memoized) only at a strict operation: arithmetic, comparison, unary, `print`/
+  `eprint`/interpolation, an `@`-primitive's own argument, and a function/`^`
+  return. A `< >` block **joins** every task it launched before returning
+  (structured concurrency). The entry runs on the single-threaded fiber scheduler
+  only when the program uses deferral, so pure programs are unchanged (zero
+  overhead). This slice covers deferred `Num` scalars; deferred composites
+  (`Text`/records/arrays), the rest of the force-set, and further `@` primitives
+  are follow-ups — a deferred value used in a not-yet-supported position is
+  rejected at compile time, never miscompiled. The `@` marker is corelib-only:
+  user code calls an `@` primitive but cannot declare one. See
+  `examples/deferred_values.ql`.
 - **Uniform `Result` layout — a `Result` of any payload flows through a generic
   `(r :: Result)` parameter/return.** Every `Result` now has a single canonical LLVM
   shape `{ i8 tag, {ptr,i64} slot }`: a `Text` or array payload fills the slot
