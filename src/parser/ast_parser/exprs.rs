@@ -515,7 +515,10 @@ impl<'a> Parser<'a> {
                 let ident = self.peek();
                 if ident.kind != TokenKind::Ident {
                     return Err(ParseError {
-                        message: format!("Expected a primitive name after `@`, got {:?}", ident.kind),
+                        message: format!(
+                            "Expected a primitive name after `@`, got {:?}",
+                            ident.kind
+                        ),
                         span: ident.span.clone(),
                     });
                 }

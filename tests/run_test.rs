@@ -758,8 +758,8 @@ fn jit_uses_caller_supplied_argv() {
     );
 
     // A bare argv (`argv[0]` only) mirrors a native binary run with no extra args.
-    let code = jit::run_program(&program, types, defer, &["f.ql".to_string()])
-        .expect("execution failed");
+    let code =
+        jit::run_program(&program, types, defer, &["f.ql".to_string()]).expect("execution failed");
     assert_eq!(code, 1, "bare argv -> args.size == 1 (argv[0] only)");
 }
 
@@ -1197,7 +1197,10 @@ fn run_deferred_threads_through_rebindings() {
 /// concurrency: a launched effect never vanishes), and the block still returns its value.
 #[test]
 fn run_deferred_unused_launch_is_scope_joined() {
-    assert_exit_linked("<< core.time\n^ = () -> Num => <\n  x = @sleep(0)\n  9\n>", 9);
+    assert_exit_linked(
+        "<< core.time\n^ = () -> Num => <\n  x = @sleep(0)\n  9\n>",
+        9,
+    );
 }
 
 /// A function whose body is a deferred value forces at its return, so deferral does not

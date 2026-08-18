@@ -139,10 +139,9 @@ impl Pass {
     /// deferred result is acceptable ([`visit_forcing`]) or unsupported ([`visit_ready`]).
     fn visit(&mut self, expr: &Expr, env: &mut Env) -> Result<bool, DeferError> {
         let deferred = match expr {
-            Expr::Number { .. }
-            | Expr::String { .. }
-            | Expr::Bool { .. }
-            | Expr::Unit { .. } => false,
+            Expr::Number { .. } | Expr::String { .. } | Expr::Bool { .. } | Expr::Unit { .. } => {
+                false
+            }
 
             Expr::Interpolation { parts, .. } => {
                 // Each hole is rendered (a force site).
@@ -349,7 +348,12 @@ impl Pass {
 
     /// Visit an expression in a position that needs a ready value but that the 0.9 slice
     /// does not yet force. A deferred result is an error (rejected, never miscompiled).
-    fn visit_ready(&mut self, expr: &Expr, env: &mut Env, position: &str) -> Result<(), DeferError> {
+    fn visit_ready(
+        &mut self,
+        expr: &Expr,
+        env: &mut Env,
+        position: &str,
+    ) -> Result<(), DeferError> {
         if self.visit(expr, env)? {
             return Err(DeferError {
                 span: expr.span().clone(),
@@ -436,7 +440,8 @@ mod tests {
         use crate::typechecker::TypeChecker;
         use std::path::Path;
 
-        let src = "<< core.time\n^ = () -> Num => <\n  a = @sleep(10)\n  b = @sleep(20)\n  a + b\n>";
+        let src =
+            "<< core.time\n^ = () -> Num => <\n  a = @sleep(10)\n  b = @sleep(20)\n  a + b\n>";
         let tokens = Lexer::tokenize(src).expect("lex");
         let program = parser::parse(&tokens).expect("parse");
         let program = modules::link(program, Path::new(".")).expect("link core.time");

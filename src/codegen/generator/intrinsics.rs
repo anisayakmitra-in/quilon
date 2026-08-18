@@ -131,12 +131,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             // generated entry thunk (the C `main` signature) on a scheduler fiber, so any
             // `@` primitive it reaches has a fiber to park on. Returns the exit code.
             "__run_fiber_main" => ctx.i32_type().fn_type(
-                &[
-                    ptr.into(),
-                    ctx.i32_type().into(),
-                    ptr.into(),
-                    ptr.into(),
-                ],
+                &[ptr.into(), ctx.i32_type().into(), ptr.into(), ptr.into()],
                 false,
             ),
             other => return Err(format!("Unknown runtime intrinsic: {}", other)),

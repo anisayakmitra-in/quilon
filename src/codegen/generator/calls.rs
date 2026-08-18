@@ -166,7 +166,10 @@ impl<'ctx> CodeGenerator<'ctx> {
             // `@sleep(ms :: Num) -> Num`: launch a sleep, return its deferred result.
             "sleep" => {
                 if args.len() != 1 {
-                    return Err(format!("@sleep expects exactly 1 argument, got {}", args.len()));
+                    return Err(format!(
+                        "@sleep expects exactly 1 argument, got {}",
+                        args.len()
+                    ));
                 }
                 let ms = self.generate_forced(&args[0])?;
                 let BasicValueEnum::FloatValue(ms) = ms else {
