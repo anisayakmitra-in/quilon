@@ -33,7 +33,7 @@ fn run_allocating_program() {
     let types = TypeChecker::new()
         .check_program(&program)
         .expect("type checking failed");
-    let defer = quilon::deferral::analyze(&program).expect("deferred-taint analysis failed");
+    let defer = quilon::deferral::analyze(&program);
     let code =
         jit::run_program(&program, types, defer, &["program".to_string()]).expect("execution");
     assert_eq!(code, 0, "the allocating program should exit 0");

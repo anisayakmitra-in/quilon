@@ -108,11 +108,10 @@ pub fn front_end(file: &Path) -> Result<Checked, FrontEndError> {
         .check_program(&program)
         .map_err(|e| FrontEndError::at(&path, &source, e.span(), &e.to_string()))?;
 
-    // Color deferred values (post-typecheck, pre-codegen). Reads no types and adds none,
-    // so the check above is unaffected; it may reject a deferred value used in a position
-    // the current force-set does not yet cover.
-    let defer = crate::deferral::analyze(&program)
-        .map_err(|e| FrontEndError::at(&path, &source, e.span(), &e.to_string()))?;
+    // Detect whether the program uses an `@` leaf IO primitive (post-typecheck,
+    // pre-codegen). Reads no types and adds none, so the check above is unaffected; it only
+    // decides whether codegen runs the entry on a scheduler fiber.
+    let defer = crate::deferral::analyze(&program);
 
     Ok(Checked {
         program,

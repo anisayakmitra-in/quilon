@@ -79,7 +79,7 @@ fn front_end(src: &str, base_dir: Option<&Path>) -> (quilon::ast::Program, TypeT
     let types = TypeChecker::new()
         .check_program(&program)
         .expect("type checking failed");
-    let defer = deferral::analyze(&program).expect("deferred-taint analysis failed");
+    let defer = deferral::analyze(&program);
     (program, types, defer)
 }
 

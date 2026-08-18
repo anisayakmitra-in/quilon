@@ -44,7 +44,7 @@ Quilon's identity, and the rules that guide its design:
 | `` ` `` (in a string) | [Interpolation](#string-interpolation-and-the-render-operator) hole · `` `` `` = one literal backtick | `` "hi `user.name`" `` |
 | `` ` `` (as a name) | The overloadable **render** operator — a type's `Text` rendering | `` ` = () -> Text => "..." `` |
 | `? :` | Ternary | `x < 0 ? -x : x` |
-| `@` (name prefix) | A [deferring leaf IO primitive](#concurrency--colorless-implicit-futures--in-progress) (corelib-only; user code calls, never declares) | `@sleep(10)` |
+| `@` (name prefix) | A [leaf IO primitive](#concurrency--colorless-implicit-futures--in-progress) (corelib-only; user code calls, never declares) | `@sleep(1)` |
 | `~` | Comment (to end of line) | `~ a note` |
 
 There are **no keywords**: `if`/`return` etc. are all expressed with symbols, and there
@@ -790,7 +790,7 @@ The type checker verifies matches are exhaustive (use `_` to cover the rest). (S
 
 >> add = (a, b) => a + b   ~ `>>` exports an item; unmarked items are file-private
 ```
-- The built-in modules are `core.io` (I/O), `core.test` (assertions), `core.cli` (argv/env helpers), and `core.time` (the deferring [`@sleep`](#concurrency--colorless-implicit-futures--in-progress) primitive); their members are real functions.
+- The built-in modules are `core.io` (I/O), `core.test` (assertions), `core.cli` (argv/env helpers), and `core.time` (the [`@sleep`](#concurrency--colorless-implicit-futures--in-progress) leaf IO primitive); their members are real functions.
 - `Text` and the operators are built-ins and need **no** import.
 - A module exposes only its `>>`-exported items.
 
@@ -933,16 +933,14 @@ Quilon uses a **conservative garbage collector** (Boehm). Heap values (`Text`, e
 
 > Colorless implicit futures on cooperative fibers: IO returns type-invisible deferreds, only strict operations force them — concurrency follows data dependence, not program order.
 
-> **Status: 🚧 in progress.** The model is locked and its first slice is implemented: the
-> `@sleep` deferring primitive (in `core.time`), deferred `Num` values that thread through
-> bindings and force at arithmetic/comparison/output/return, real overlap of independent
-> launches on a single-threaded fiber scheduler, and `< >` scope join. Still to come (the
-> force-set and representation are filled in incrementally): deferred **composites**
-> (`Text`/records/arrays, via a pointer-tagged representation), the remaining force-set
-> sites (match scrutinee, field/index, native args beyond `@sleep`), further `@` primitives
-> (file/socket/`@read`), and M:N multicore. A deferred value used in a not-yet-supported
-> position is **rejected at compile time** with a clear diagnostic, never miscompiled. The
-> full specification lives in
+> **Status: 🚧 in progress.** The model described below is locked; what runs today is its
+> first slice — the single-threaded fiber scheduler plus the `@sleep` leaf primitive (in
+> `core.time`), an effect-only **pause** (`@sleep(secs) -> $`). Because a pause returns no
+> value, this slice is launch-and-wait only: the *deferred value* half of the model — a
+> value-returning `@` primitive whose result threads lazily and is forced at a strict
+> operation, giving automatic overlap — arrives with a later primitive such as `@read`. A
+> program's entry runs on the fiber scheduler only when it uses an `@` primitive, so pure
+> programs are byte-identical (zero overhead). The full specification lives in
 > [issue #120](https://github.com/assapir/quilon/issues/120); this is the durable summary.
 
 Quilon's concurrency is **colorless**: you write ordinary, blocking-*looking* code, and the
@@ -991,28 +989,29 @@ signature to be allowed to suspend.
 across independent deferred IO is **unspecified** — an accepted tradeoff for getting the
 overlap implicitly.
 
-**Runnable today (`@sleep`).** The first `@` primitive lives in `core.time`. Each call
-launches on its own fiber and returns a deferred `Num` immediately, so independent launches
-overlap; the values force at the arithmetic frontier. See `examples/deferred_values.ql`.
+**Runnable today (`@sleep`, a pause).** The first `@` primitive lives in `core.time`.
+`@sleep(secs)` — seconds as a fractional `Num` — is effect-only (`-> $`): used as a
+statement it **waits right there** on the current fiber, then execution continues in program
+order. It carries no value, so nothing defers or forces yet. See
+`examples/deferred_values.ql`.
 
 ```quilon
 << core.time
 
-~ Two independent launches overlap: both start before either is forced.
-overlap = () -> Num => <
-  a = @sleep(10)          ~ launches, returns a deferred Num immediately
-  b = @sleep(20)          ~ launches too — runs concurrently with a
-  a + b                   ~ forced here at the arithmetic frontier → 30
+^ = () -> Num => <
+  @sleep(0.02)            ~ pause ~20ms, then continue
+  @sleep(0.02)            ~ waits here too (sequential)
+  6 * 7                   ~ ordinary ready arithmetic → 42
 >
 ```
 
-Both sleeps are in flight at once because neither is forced until the `+` reads them; the
-enclosing `< >` block joins any launch it started before returning. `overlap` carries no
-marker, no `async`, no `await` — only the leaf `@sleep` is marked.
+Running the entry on the fiber scheduler is what lets `@sleep` park; `^` and any helper it
+calls carry no marker, no `async`, no `await` — only the leaf `@sleep` is marked.
 
-**Where it is headed (`@get`).** As deferred composites and the rest of the force-set land,
-the same model extends to IO that returns `Text`/records — leaf primitives stay the only
-marked thing, and user code stays unmarked:
+**Where it is headed (`@read`/`@get`).** A *value-returning* `@` primitive is the deferred
+one: its result threads lazily through code and is forced only at a strict operation, so
+independent reads overlap automatically. Leaf primitives stay the only marked thing, and
+user code stays unmarked:
 
 ```quilon
 ~ `@get` is a leaf IO primitive (stdlib/runtime) — the ONLY marked thing here.
@@ -1148,7 +1147,7 @@ pathological input.
 | Overloaded name passed as a value, or a closure as a param / return (higher-order) | ❌ |
 | Generic / polymorphic-capturing closures | ❌ |
 | String interpolation | ❌ |
-| [Colorless implicit-futures concurrency](#concurrency--colorless-implicit-futures--in-progress) — `@` leaf IO primitives, deferred values, force-at-strict-op ([#120](https://github.com/assapir/quilon/issues/120)): `@sleep` + deferred `Num` + overlap + scope join land the first slice; composites & the rest of the force-set are follow-ups | 🚧 |
+| [Colorless implicit-futures concurrency](#concurrency--colorless-implicit-futures--in-progress) — `@` leaf IO primitives, deferred values, force-at-strict-op ([#120](https://github.com/assapir/quilon/issues/120)): the fiber scheduler + the `@sleep` pause primitive land the first slice; deferred values, forcing, and overlap arrive with a value-returning primitive | 🚧 |
 
 ---
 
@@ -1163,7 +1162,7 @@ pathological input.
 - A `Text` value bound from an `args`/`env` element supports the full `Text` API
   (`.size`/`.length`/`+`/comparison), and — like a bound `Result` payload — dispatches an
   [overload set](#overloading) by its concrete `Text` type.
-- **Concurrency is in its first slice.** The [colorless implicit-futures model](#concurrency--colorless-implicit-futures--in-progress) ([#120](https://github.com/assapir/quilon/issues/120)) is locked and partly built: the fiber scheduler + reactor run, and `@sleep` (in `core.time`) with deferred `Num` values, overlap of independent launches, force-at-strict-op, and `< >` scope join all work end to end. Deferred **composites** (`Text`/records/arrays), the rest of the force-set, further `@` primitives (file/socket), and multicore M:N are the remaining work on the road to 1.0.
+- **Concurrency is in its first slice.** The [colorless implicit-futures model](#concurrency--colorless-implicit-futures--in-progress) ([#120](https://github.com/assapir/quilon/issues/120)) is locked and partly built: the single-threaded fiber scheduler + reactor run, and the `@sleep` leaf primitive (in `core.time`) — an effect-only pause — works end to end on it. The *deferred value* half (a value-returning `@` primitive whose result threads lazily and forces at a strict operation, giving automatic overlap), deferred composites, further `@` primitives (file/socket), and multicore M:N are the remaining work on the road to 1.0.
 
 ---
 

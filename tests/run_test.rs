@@ -749,7 +749,7 @@ fn jit_uses_caller_supplied_argv() {
         "b".to_string(),
         "c".to_string(),
     ];
-    let defer = quilon::deferral::analyze(&program).expect("deferred-taint analysis failed");
+    let defer = quilon::deferral::analyze(&program);
     let code =
         jit::run_program(&program, types.clone(), defer.clone(), &argv).expect("execution failed");
     assert_eq!(
@@ -777,7 +777,7 @@ fn legacy_numeric_argc_argv_entry_still_runs() {
         .check_program(&program)
         .expect("legacy numeric entry should type-check");
     let _guard = JIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    let defer = quilon::deferral::analyze(&program).expect("deferred-taint analysis failed");
+    let defer = quilon::deferral::analyze(&program);
     let code = jit::run_program(&program, types, defer, &["program".to_string()])
         .expect("legacy numeric entry should run");
     assert_eq!(code, 3, "legacy (Num, Num) entry should still run");

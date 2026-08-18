@@ -6,25 +6,19 @@ All notable changes to Quilon are documented here.
 
 ### Added
 
-- **Colorless implicit futures — first slice ([#120](https://github.com/assapir/quilon/issues/120)).**
-  Quilon's concurrency model becomes real: a deferring leaf IO primitive `@sleep`
-  (in the new `core.time` module) launches on its own fiber and returns a
-  *deferred* `Num` immediately, so two independent `@sleep` calls **overlap**
-  (three 200 ms sleeps finish in ~200 ms, not 600). Deferral is **type-invisible**
-  — a deferred `Num` still types as `Num`, so the type checker is byte-identical
-  and overload resolution is untouched — and is carried by a new pre-codegen
-  **deferred-taint pass**, not a `Task`/`Future` type. A deferred value threads
-  lazily through `=`/`:=` bindings and is **forced** (the fiber parks until ready,
-  memoized) only at a strict operation: arithmetic, comparison, unary, `print`/
-  `eprint`/interpolation, an `@`-primitive's own argument, and a function/`^`
-  return. A `< >` block **joins** every task it launched before returning
-  (structured concurrency). The entry runs on the single-threaded fiber scheduler
-  only when the program uses deferral, so pure programs are unchanged (zero
-  overhead). This slice covers deferred `Num` scalars; deferred composites
-  (`Text`/records/arrays), the rest of the force-set, and further `@` primitives
-  are follow-ups — a deferred value used in a not-yet-supported position is
-  rejected at compile time, never miscompiled. The `@` marker is corelib-only:
-  user code calls an `@` primitive but cannot declare one. See
+- **Concurrency runtime — the `@sleep` leaf IO primitive ([#120](https://github.com/assapir/quilon/issues/120)).**
+  The first Quilon-visible surface of the colorless implicit-futures model: `@sleep`
+  (in the new `core.time` module), an effect-only pause. `@sleep(secs)` takes seconds
+  (a fractional `Num`, like Python's `time.sleep`) and **waits right there** on the
+  current fiber, then execution continues in program order; it yields `$` (Unit). The
+  program's entry runs on the single-threaded fiber scheduler so `@sleep` has a fiber to
+  park on — but **only when the program uses an `@` primitive**, so pure programs are
+  byte-identical (the emitted LLVM IR is unchanged; zero overhead). The `@` marker names
+  a leaf IO primitive and is **corelib-only**: user code calls one but cannot declare
+  one, and the type system is untouched (`@sleep` is a plain `Num -> $`, no `Task`/
+  `Future` type). This lands the runtime surface; the *deferred value* story — a
+  value-returning primitive whose result threads lazily and is forced at a strict
+  operation, giving automatic overlap — arrives with a later primitive (`@read`). See
   `examples/deferred_values.ql`.
 - **Uniform `Result` layout — a `Result` of any payload flows through a generic
   `(r :: Result)` parameter/return.** Every `Result` now has a single canonical LLVM
