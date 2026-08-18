@@ -36,6 +36,24 @@ impl<'ctx> CodeGenerator<'ctx> {
             return Err("Only direct function calls supported".to_string());
         };
 
+        // A leaf `@` IO primitive (`@sleep`), recognized by the `@` the parser fused into
+        // the name. Handled before every other dispatch — the name is not an
+        // overload/method/constructor.
+        if let Some(primitive) = func_name.strip_prefix('@') {
+            return self.generate_at_primitive(primitive, args);
+        }
+
+        // `core.time`'s `now()` — a plain (non-`@`) monotonic clock read, lowered to the
+        // `__now` runtime intrinsic. Its corelib body is an inert placeholder.
+        if func_name == "now" && args.is_empty() {
+            let now = self.get_intrinsic("__now")?;
+            let call = self
+                .builder
+                .build_call(now, &[], "now")
+                .map_err(ctx("Failed to call now()"))?;
+            return Self::call_result_to_basic(call);
+        }
+
         // Core IO builtins, lowered to runtime intrinsics (see runtime::intrinsics).
         // `print`/`eprint` are the built-in single-arg Num/Text/Bool overloads; a
         // *user* overload of the same name (a different signature) is dispatched as a
@@ -144,6 +162,36 @@ impl<'ctx> CodeGenerator<'ctx> {
             .collect::<Result<Vec<_>, _>>()?;
 
         self.emit_call(function, &arg_values)
+    }
+
+    /// Lower a leaf `@` IO primitive call to its runtime intrinsic. The first is
+    /// `@sleep(seconds :: Num) -> $`, an effect-only pause that waits on the current fiber
+    /// and yields `$` (Unit).
+    fn generate_at_primitive(
+        &mut self,
+        primitive: &str,
+        args: &[Expr],
+    ) -> Result<BasicValueEnum<'ctx>, String> {
+        match primitive {
+            "sleep" => {
+                if args.len() != 1 {
+                    return Err(format!(
+                        "@sleep expects exactly 1 argument, got {}",
+                        args.len()
+                    ));
+                }
+                let BasicValueEnum::FloatValue(seconds) = self.generate_expr(&args[0])? else {
+                    return Err("@sleep expects a Num (seconds)".to_string());
+                };
+                let sleep = self.get_intrinsic("__sleep")?;
+                self.builder
+                    .build_call(sleep, &[seconds.into()], "")
+                    .map_err(ctx("Failed to call @sleep"))?;
+                // `@sleep` yields `$` (Unit).
+                Ok(self.unit_value().into())
+            }
+            other => Err(format!("Unknown leaf `@` primitive `@{other}`")),
+        }
     }
 
     /// Convert a call site's result to a `BasicValueEnum`, erroring if the callee returns

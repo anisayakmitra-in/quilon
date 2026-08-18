@@ -3,6 +3,7 @@
 pub mod ast;
 pub mod build;
 pub mod codegen;
+pub mod deferral;
 pub mod diagnostic;
 pub mod driver;
 pub mod jit;

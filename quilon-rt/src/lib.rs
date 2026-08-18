@@ -42,15 +42,18 @@ pub mod process;
 pub mod reactor;
 pub mod scheduler;
 pub mod text;
+pub mod time;
 
 pub use io::{__print_text_fd, __write_bytes};
 pub use mem::{__alloc, __gc_init, __index_fail, GcThread, register_thread};
 pub use process::{__argv_to_text_array, __envp_to_pairs, __exit};
+pub use scheduler::__run_fiber_main;
 pub use text::{
     __bool_to_text, __num_to_text, __text_cmp, __text_contains, __text_index_of, __text_length,
     __text_replace_all, __text_replace_n, __text_slice, __text_split, __text_to_lower,
     __text_to_upper, __text_trim_end, __text_trim_start,
 };
+pub use time::{__now, __sleep};
 
 use mem::QlSlice;
 use std::os::raw::{c_char, c_int, c_void};
@@ -132,6 +135,14 @@ intrinsic_registry! {
     __text_replace_n: extern "C" fn(*const u8, i64, *const u8, i64, *const u8, i64, i64) -> QlSlice,
     __text_slice: extern "C" fn(*const u8, i64, i64, i64) -> QlSlice,
     __text_split: extern "C" fn(*const u8, i64, *const u8, i64) -> QlSlice,
+    __sleep: extern "C" fn(f64),
+    __now: extern "C" fn() -> f64,
+    __run_fiber_main: extern "C" fn(
+        extern "C" fn(c_int, *const *const c_char, *const *const c_char) -> c_int,
+        c_int,
+        *const *const c_char,
+        *const *const c_char,
+    ) -> c_int,
 }
 
 // Shared unit-test support. `GC_LOCK` is taken by GC-touching tests in more than one

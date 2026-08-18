@@ -44,6 +44,7 @@ Quilon's identity, and the rules that guide its design:
 | `` ` `` (in a string) | [Interpolation](#string-interpolation-and-the-render-operator) hole · `` `` `` = one literal backtick | `` "hi `user.name`" `` |
 | `` ` `` (as a name) | The overloadable **render** operator — a type's `Text` rendering | `` ` = () -> Text => "..." `` |
 | `? :` | Ternary | `x < 0 ? -x : x` |
+| `@` (name prefix) | A [leaf IO primitive](#concurrency--colorless-implicit-futures--in-progress) (corelib-only; user code calls, never declares) | `@sleep(1)` |
 | `~` | Comment (to end of line) | `~ a note` |
 
 There are **no keywords**: `if`/`return` etc. are all expressed with symbols, and there
@@ -789,7 +790,7 @@ The type checker verifies matches are exhaustive (use `_` to cover the rest). (S
 
 >> add = (a, b) => a + b   ~ `>>` exports an item; unmarked items are file-private
 ```
-- The built-in modules are `core.io` (I/O), `core.test` (assertions), and `core.cli` (argv/env helpers); their members are real functions.
+- The built-in modules are `core.io` (I/O), `core.test` (assertions), `core.cli` (argv/env helpers), and `core.time` (the [`@sleep`](#concurrency--colorless-implicit-futures--in-progress) leaf IO primitive and the monotonic `now()` clock); their members are real functions.
 - `Text` and the operators are built-ins and need **no** import.
 - A module exposes only its `>>`-exported items.
 
@@ -928,12 +929,19 @@ Quilon uses a **conservative garbage collector** (Boehm). Heap values (`Text`, e
 
 ---
 
-## Concurrency — colorless implicit futures (planned)
+## Concurrency — colorless implicit futures (🚧 in progress)
 
-> **Status: planned (❌ — not yet implemented).** This section records Quilon's locked
-> concurrency model — its core forward-looking design decision and a defining part of the
-> language's identity. The full specification lives in
-> [issue #120](https://github.com/assapir/quilon/issues/120); this is the durable summary.
+> Colorless implicit futures on cooperative fibers: IO returns type-invisible deferreds, only strict operations force them — concurrency follows data dependence, not program order.
+
+> **Status: 🚧 in progress.** The model described below is locked; what runs today is its
+> first slice — the single-threaded fiber scheduler plus the `@sleep` leaf primitive (in
+> `core.time`), an effect-only **pause** (`@sleep(seconds) -> $`). Because a pause returns no
+> value, this slice is launch-and-wait only: the *deferred value* half of the model — a
+> value-returning `@` primitive whose result threads lazily and is forced at a strict
+> operation, giving automatic overlap — arrives with a later primitive such as `@read`. A
+> program's entry runs on the fiber scheduler only when it uses an `@` primitive, so pure
+> programs are byte-identical (zero overhead). What follows is the durable summary of the
+> locked model.
 
 Quilon's concurrency is **colorless**: you write ordinary, blocking-*looking* code, and the
 runtime overlaps independent IO for you automatically. There is **no** `async`, **no**
@@ -981,22 +989,46 @@ signature to be allowed to suspend.
 across independent deferred IO is **unspecified** — an accepted tradeoff for getting the
 overlap implicitly.
 
+**Runnable today (`@sleep`, a pause; `now`, a clock).** `core.time` provides two things:
+`@sleep(seconds)` — seconds as a fractional `Num` — is effect-only (`-> $`): used as a
+statement it **waits right there** on the current fiber, then execution continues in program
+order. It carries no value, so nothing defers or forces yet. `now()` reads a **monotonic**
+clock (seconds as a `Num`); only *differences* between two readings are meaningful, so it
+measures elapsed time. See `examples/deferred_values.ql`.
+
+```quilon
+<< core.time
+
+^ = () -> Num => <
+  start = now()
+  @sleep(0.05)            ~ pause ~50ms, then continue
+  now() - start >= 0.05 ? 6 * 7 : 0   ~ the sleep really waited → 42
+>
+```
+
+Running the entry on the fiber scheduler is what lets `@sleep` park; `^` and any helper it
+calls carry no marker, no `async`, no `await` — only the leaf `@sleep` is marked. `now()` is
+a plain (non-`@`) primitive — reading the clock is instant and never parks.
+
+**Where it is headed (`@read`/`@get`).** A *value-returning* `@` primitive is the deferred
+one: its result threads lazily through code and is forced only at a strict operation, so
+independent reads overlap automatically. Leaf primitives stay the only marked thing, and
+user code stays unmarked:
+
 ```quilon
 ~ `@get` is a leaf IO primitive (stdlib/runtime) — the ONLY marked thing here.
 ~ `fetchJson` is ordinary, unmarked user code, yet concurrency-capable for free:
 fetchJson = (url :: Text) -> Text => @get(url)   ~ launches IO, returns a deferred Text
 
 loadDashboard = (user :: Text) -> Text => <
-  profile = fetchJson("/users/" + user)     ~ launches fetch #1, returns immediately
-  orders  = fetchJson("/orders/" + user)    ~ launches fetch #2 — overlaps fetch #1
+  profile = fetchJson("/users/" + user)     ~ launches the first fetch, returns immediately
+  orders  = fetchJson("/orders/" + user)    ~ launches the second fetch — overlaps the first
   render(profile, orders)                    ~ each forced at a strict op inside render (block joins)
 >
 ```
 
-Both fetches are in flight at once because neither is forced until `render` reads them; the
-enclosing `< >` block joins them before returning. Note that `fetchJson` and `loadDashboard`
-carry no marker, no `async`, no `await` — only the leaf `@get` is marked. See
-[issue #120](https://github.com/assapir/quilon/issues/120) for the full specification.
+Only the leaf `@get`/`@read` is marked; `fetchJson` and `loadDashboard` are ordinary,
+unmarked user code, concurrency-capable for free.
 
 ---
 
@@ -1106,7 +1138,7 @@ pathological input.
 | Sum-type payloads: `Num` / `Bool` / `Text` | ✅ |
 | Concrete `Result` payloads: a bound `Ok`/`NotOk` payload is usable at its real type (overload dispatch, across `-> Result` fn boundaries) | ✅ |
 | Uniform `Result` layout: a `Result` of ANY payload (`Num`/`Text`/`[]Text`/composite) passes through a generic `(r :: Result)` param/return — powers `assertOk`/`assertNotOk` on `getEnv`/`getOpt` | ✅ |
-| Modules: `<< core.io`, `<< core.test`, `<< core.cli`, file-path imports, `>>` exports | ✅ |
+| Modules: `<< core.io`, `<< core.test`, `<< core.cli`, `<< core.time`, file-path imports, `>>` exports | ✅ |
 | I/O: `print` / `eprint` / `write` | ✅ |
 | Assertions: `<< core.test` (`assert` (+ `AssertOpts` message) / `assertEq` / `assertNotEq` / `assertOk` / `assertNotOk`; fail → exit 101) | ✅ |
 | CLI helpers: `<< core.cli` (`getEnv` / `hasFlag` / `getOpt`; both `--name value` and `--name=value`; flag names with or without `--`) | ✅ |
@@ -1118,7 +1150,7 @@ pathological input.
 | Overloaded name passed as a value, or a closure as a param / return (higher-order) | ❌ |
 | Generic / polymorphic-capturing closures | ❌ |
 | String interpolation | ❌ |
-| [Colorless implicit-futures concurrency](#concurrency--colorless-implicit-futures-planned) — `@` leaf IO primitives, deferred values, force-at-strict-op (planned; [#120](https://github.com/assapir/quilon/issues/120)) | ❌ |
+| [Colorless implicit-futures concurrency](#concurrency--colorless-implicit-futures--in-progress) — `@` leaf IO primitives, deferred values, force-at-strict-op: the fiber scheduler + the `@sleep` pause primitive land the first slice; deferred values, forcing, and overlap arrive with a value-returning primitive | 🚧 |
 
 ---
 
@@ -1133,7 +1165,7 @@ pathological input.
 - A `Text` value bound from an `args`/`env` element supports the full `Text` API
   (`.size`/`.length`/`+`/comparison), and — like a bound `Result` payload — dispatches an
   [overload set](#overloading) by its concrete `Text` type.
-- **No concurrency runtime yet.** The [colorless implicit-futures model](#concurrency--colorless-implicit-futures-planned) is a locked *design* ([#120](https://github.com/assapir/quilon/issues/120)), not an implemented feature: `@` primitives, deferred values, fibers, and the reactor are still to be built (the core deliverable on the road to 1.0).
+- **Concurrency is in its first slice.** The [colorless implicit-futures model](#concurrency--colorless-implicit-futures--in-progress) is locked and partly built: the single-threaded fiber scheduler + reactor run, and the `@sleep` leaf primitive (in `core.time`) — an effect-only pause — works end to end on it. The *deferred value* half (a value-returning `@` primitive whose result threads lazily and forces at a strict operation, giving automatic overlap), deferred composites, further `@` primitives (file/socket), and multicore M:N are the remaining work on the road to 1.0.
 
 ---
 

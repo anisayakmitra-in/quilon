@@ -118,6 +118,19 @@ impl<'ctx> CodeGenerator<'ctx> {
                 ],
                 false,
             ),
+            // void __sleep(double seconds) — the `@sleep` leaf IO primitive: pause the
+            // current fiber for `seconds` seconds, then continue.
+            "__sleep" => void.fn_type(&[f64t.into()], false),
+            // double __now() — read the monotonic clock, in seconds. Backs `core.time`'s
+            // plain (non-`@`) `now()`; only differences between readings are meaningful.
+            "__now" => f64t.fn_type(&[], false),
+            // i32 __run_fiber_main(ptr entry, i32 argc, ptr argv, ptr envp) — run the
+            // generated entry thunk (the C `main` signature) on a scheduler fiber, so any
+            // `@` primitive it reaches has a fiber to park on. Returns the exit code.
+            "__run_fiber_main" => ctx.i32_type().fn_type(
+                &[ptr.into(), ctx.i32_type().into(), ptr.into(), ptr.into()],
+                false,
+            ),
             other => return Err(format!("Unknown runtime intrinsic: {}", other)),
         };
         Ok(self.module.add_function(name, fn_type, None))

@@ -88,7 +88,16 @@ impl<'a> Parser<'a> {
             return self.parse_function_decl(op_name, start, None, exported);
         }
 
-        let name = self.expect_ident()?;
+        // A leaf IO primitive declaration names itself with a fused `@name` (`@sleep`),
+        // mirroring the call-site surface. Only the corelib declares these; user code is
+        // rejected downstream (the front end refuses an `@` declaration outside a built-in
+        // module). A `@name` is always a function declaration (a primitive takes args).
+        let name = if self.check(&TokenKind::At) {
+            self.advance();
+            format!("@{}", self.expect_ident()?)
+        } else {
+            self.expect_ident()?
+        };
 
         // Check for type annotation
         let type_annotation = if self.check(&TokenKind::TypeAnnotation) {

@@ -271,8 +271,9 @@ impl<'ctx> CodeGenerator<'ctx> {
 
     pub(super) fn generate_function_decl(&mut self, decl: &FunctionDecl) -> Result<(), String> {
         // The inert core.io print/eprint placeholder is never emitted (the compiler
-        // lowers print/eprint to runtime intrinsics).
-        if decl.is_inert_io_placeholder() {
+        // lowers print/eprint to runtime intrinsics). A leaf `@` primitive (`@sleep`) is
+        // likewise a corelib placeholder lowered to a runtime intrinsic at its call site.
+        if decl.is_inert_io_placeholder() || decl.name.starts_with('@') {
             return Ok(());
         }
 

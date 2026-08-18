@@ -749,14 +749,17 @@ fn jit_uses_caller_supplied_argv() {
         "b".to_string(),
         "c".to_string(),
     ];
-    let code = jit::run_program(&program, types.clone(), &argv).expect("execution failed");
+    let defer = quilon::deferral::analyze(&program);
+    let code =
+        jit::run_program(&program, types.clone(), defer.clone(), &argv).expect("execution failed");
     assert_eq!(
         code, 4,
         "JIT `args.size` must equal the caller-supplied argv length (file + 3 user args)"
     );
 
     // A bare argv (`argv[0]` only) mirrors a native binary run with no extra args.
-    let code = jit::run_program(&program, types, &["f.ql".to_string()]).expect("execution failed");
+    let code =
+        jit::run_program(&program, types, defer, &["f.ql".to_string()]).expect("execution failed");
     assert_eq!(code, 1, "bare argv -> args.size == 1 (argv[0] only)");
 }
 
@@ -774,7 +777,8 @@ fn legacy_numeric_argc_argv_entry_still_runs() {
         .check_program(&program)
         .expect("legacy numeric entry should type-check");
     let _guard = JIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    let code = jit::run_program(&program, types, &["program".to_string()])
+    let defer = quilon::deferral::analyze(&program);
+    let code = jit::run_program(&program, types, defer, &["program".to_string()])
         .expect("legacy numeric entry should run");
     assert_eq!(code, 3, "legacy (Num, Num) entry should still run");
 }
@@ -1152,5 +1156,96 @@ fn run_overload_call_uses_the_member_defined_above_it() {
     assert_exit(
         "pick = (n :: Num) -> Num => 11\nfromNum = () -> Num => pick(1)\npick = (t :: Text) -> Num => 22\n^ = () -> Num => fromNum() + pick(\"x\")",
         33,
+    );
+}
+
+// --- The `core.time` primitives: `@sleep` (pause) and `now` (clock) ------------------
+//
+// `@sleep(seconds) -> $` is an effect-only pause: it waits on the current fiber, then
+// execution continues in program order. `now()` reads a monotonic clock. These run a
+// program that uses them through the full pipeline (front end + fiber scheduler) and assert
+// it computes the right READY value and exits cleanly. They import `core.time`, so they go
+// through the linked front end. Durations are tiny.
+
+/// A `@sleep` statement runs (pausing the fiber) and the block then returns a ready value.
+#[test]
+fn run_sleep_pauses_then_returns_ready_value() {
+    assert_exit_linked(
+        r#"
+<< core.time
+^ = () -> Num => <
+  @sleep(0.01)
+  6 * 7
+>
+"#,
+        42,
+    );
+}
+
+/// Several sequential `@sleep` statements each run, and evaluation continues past them.
+#[test]
+fn run_multiple_sleeps_run_in_order() {
+    assert_exit_linked(
+        r#"
+<< core.time
+^ = () -> Num => <
+  @sleep(0.01)
+  @sleep(0.01)
+  @sleep(0.01)
+  5
+>
+"#,
+        5,
+    );
+}
+
+/// `@sleep` reached through an ordinary (unmarked) helper still runs on the entry fiber.
+#[test]
+fn run_sleep_through_a_helper_function() {
+    assert_exit_linked(
+        r#"
+<< core.time
+nap = () -> $ => @sleep(0.01)
+^ = () -> Num => <
+  nap()
+  3
+>
+"#,
+        3,
+    );
+}
+
+/// `@sleep` also composes as a statement inside an ordinary array-method iteration.
+#[test]
+fn run_sleep_inside_each_iteration() {
+    assert_exit_linked(
+        r#"
+<< core.time
+^ = () -> Num => <
+  [1, 2].each(n => @sleep(0.005))
+  8
+>
+"#,
+        8,
+    );
+}
+
+/// `now()` deltas measure the pause: the elapsed time across a `@sleep` is at least the
+/// requested duration (a sleep waits AT LEAST its duration, so `>=` is deterministic). The
+/// program exits 0 only if `assert` held — genuine verification that the sleep waited.
+#[test]
+fn run_now_measures_that_sleep_actually_waited() {
+    assert_exit_linked(
+        r#"
+<< core.test
+<< core.time
+^ = () -> Num => <
+  start = now()
+  @sleep(0.05)
+  assert(now() - start >= 0.05)
+  0
+>
+"#,
+        0,
     );
 }

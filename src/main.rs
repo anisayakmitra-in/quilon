@@ -98,7 +98,7 @@ fn main() {
 
             // JIT-compile and execute in-process; the entry point's value
             // becomes the program's exit code.
-            match jit::run_program(&checked.program, checked.types, &argv) {
+            match jit::run_program(&checked.program, checked.types, checked.defer, &argv) {
                 Ok(code) => std::process::exit(code),
                 Err(e) => {
                     eprintln!("❌ Runtime error: {}", e);
@@ -119,6 +119,7 @@ fn main() {
             let context = Context::create();
             let mut generator = codegen::CodeGenerator::new(&context, "main");
             generator.set_type_table(checked.types);
+            generator.set_defer_info(checked.defer);
 
             let ir = match generator.generate(&program) {
                 Ok(ir) => ir,
@@ -163,6 +164,7 @@ fn main() {
             // get DWARF line info); the detailed front-end returns both alongside the program.
             let checked = checked(&file);
             let debug_meta = debug.then_some((checked.source, checked.imported_items));
+            let defer = checked.defer;
             let program = checked.program;
             require_entry_point(&program);
 
@@ -180,6 +182,7 @@ fn main() {
             match build::build_native(
                 &program,
                 checked.types,
+                defer,
                 &out,
                 &linker,
                 debug_source.as_ref(),

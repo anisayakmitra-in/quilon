@@ -162,6 +162,13 @@ pub struct CodeGenerator<'ctx> {
     // element/field/result LLVM type instead of guessing `f64` from a runtime value.
     // Populated at the start of `generate`; empty before then.
     oracle: TypeOracle,
+    // The deferred-value coloring from the taint pass: which expressions evaluate to a
+    // deferred (promise) value, and whether any `@` launch is reachable. Codegen emits the
+    // pointer representation for a deferred value and a `force` where a force-set primitive
+    // reads it; `uses_deferral` gates running the entry on a scheduler fiber and `< >`
+    // scope join. Empty (nothing deferred) for pure programs and IR-only tests, so their
+    // codegen is byte-identical.
+    defer: crate::deferral::DeferInfo,
     // Overload sets, keyed by name (function names AND operator symbols like `"+"`).
     // Each entry is the list of that name's overload parameter-type signatures. A name
     // is present here iff it is an overload set (operator-named, or 2+ same-named
@@ -309,6 +316,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             lambda_counter: 0,
             closure_sigs: HashMap::new(),
             oracle: TypeOracle::default(),
+            defer: crate::deferral::DeferInfo::default(),
             overloads: HashMap::new(),
             var_types: HashMap::new(),
             fn_return_types: HashMap::new(),
@@ -373,6 +381,14 @@ impl<'ctx> CodeGenerator<'ctx> {
     /// typecheck pass) rely on.
     pub fn set_type_table(&mut self, table: crate::typechecker::TypeTable) {
         self.oracle = TypeOracle::new(table);
+    }
+
+    /// Install the **deferred-value coloring** from the taint pass. Codegen consults it to
+    /// emit the promise representation for deferred values and a `force` at force-set sites,
+    /// and to decide whether to run the entry on a scheduler fiber. Left empty (nothing
+    /// deferred) for the IR-only codegen tests, which then compile exactly as before.
+    pub fn set_defer_info(&mut self, defer: crate::deferral::DeferInfo) {
+        self.defer = defer;
     }
 
     pub fn generate(&mut self, program: &Program) -> Result<String, String> {
@@ -552,6 +568,64 @@ impl<'ctx> CodeGenerator<'ctx> {
             .build_call(gc_init, &[], "")
             .map_err(ctx("Failed to call GC init"))?;
 
+        // Emit the entry dispatch (build argv/env, call `^`, convert to the i32 exit code).
+        // A program that uses deferral must run its entry ON a scheduler fiber, so any `@`
+        // primitive it reaches has a fiber to park on: the dispatch goes into a `__ql_entry`
+        // thunk that `main` runs via `__run_fiber_main`. A pure program keeps the dispatch
+        // inline in `main`, byte-identical to before this feature existed.
+        let return_val = if self.defer.uses_deferral {
+            let entry_fn = self.module.add_function("__ql_entry", main_type, None);
+            let thunk_scope = self.begin_di_function(entry_fn, "__ql_entry", &main_span);
+            let thunk_argc = entry_fn.get_nth_param(0).unwrap().into_int_value();
+            let thunk_argv = entry_fn.get_nth_param(1).unwrap().into_pointer_value();
+            let thunk_envp = entry_fn.get_nth_param(2).unwrap().into_pointer_value();
+            let thunk_block = self.context.append_basic_block(entry_fn, "entry");
+            self.builder.position_at_end(thunk_block);
+            let exit_code =
+                self.emit_entry_dispatch(entry_params, thunk_argc, thunk_argv, thunk_envp)?;
+            self.builder
+                .build_return(Some(&exit_code))
+                .map_err(ctx("Failed to build entry-thunk return"))?;
+            self.end_di_scope(thunk_scope);
+
+            // Back in `main`: run the thunk on a scheduler fiber; its result is the exit code.
+            self.builder.position_at_end(entry);
+            let runner = self.get_intrinsic("__run_fiber_main")?;
+            let entry_ptr = entry_fn.as_global_value().as_pointer_value();
+            use inkwell::values::AnyValue;
+            self.builder
+                .build_call(
+                    runner,
+                    &[entry_ptr.into(), argc.into(), argv.into(), envp.into()],
+                    "run_main",
+                )
+                .map_err(ctx("Failed to run entry on a fiber"))?
+                .as_any_value_enum()
+                .into_int_value()
+        } else {
+            self.emit_entry_dispatch(entry_params, argc, argv, envp)?
+        };
+
+        self.builder
+            .build_return(Some(&return_val))
+            .map_err(ctx("Failed to build return"))?;
+
+        self.end_di_scope(saved_scope);
+        Ok(())
+    }
+
+    /// Emit the entry-point dispatch into the current block and return the i32 exit code:
+    /// build `args`/`env` from `argc`/`argv`/`envp` per `^`'s declared signature, call `^`,
+    /// and convert its result. Shared by the inline (pure-program) `main` and the
+    /// `__ql_entry` fiber thunk (deferral), so both dispatch identically.
+    fn emit_entry_dispatch(
+        &mut self,
+        entry_params: &[Type],
+        argc: inkwell::values::IntValue<'ctx>,
+        argv: inkwell::values::PointerValue<'ctx>,
+        envp: inkwell::values::PointerValue<'ctx>,
+    ) -> Result<inkwell::values::IntValue<'ctx>, String> {
+        let i32_type = self.context.i32_type();
         // Get the ^ (entry point) function
         let user_entry = self
             .module
@@ -669,12 +743,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
         };
 
-        self.builder
-            .build_return(Some(&return_val))
-            .map_err(ctx("Failed to build return"))?;
-
-        self.end_di_scope(saved_scope);
-        Ok(())
+        Ok(return_val)
     }
 
     fn generate_item(&mut self, item: &Item) -> Result<(), String> {

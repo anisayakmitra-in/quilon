@@ -119,6 +119,11 @@ fn builtin_source(name: &str) -> Option<&'static str> {
         // core.cli — thin, pure-Quilon helpers over the `^` entry point's
         // `args :: []Text` and `env :: [][]Text`.
         "core.cli" => Some(include_str!("../corelib/cli.ql")),
+        // core.time — time-related leaf IO primitives (`@sleep`). Documentation-only:
+        // `@sleep` is a compiler-provided built-in (lowered to the runtime scheduler),
+        // like `print`/`write`, so importing the module makes intent explicit but merges
+        // no items. It is the documented home of the deferring `@sleep` primitive.
+        "core.time" => Some(include_str!("../corelib/time.ql")),
         // Text is a built-in primitive type (like Num/Bool/arrays): its operations
         // (`+`, `.size`, `.length`) are compiler-intrinsic and need no import, so
         // there is intentionally no `core.text` module.

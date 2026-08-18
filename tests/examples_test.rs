@@ -95,8 +95,13 @@ fn runnable_examples_exit_zero() {
     for path in runnable_examples() {
         let name = path.file_name().unwrap().to_string_lossy().to_string();
         let checked = front_end(&path).unwrap_or_else(|e| panic!("{name} failed to compile: {e}"));
-        let code = jit::run_program(&checked.program, checked.types, &["program".to_string()])
-            .unwrap_or_else(|e| panic!("{name} failed to run: {e}"));
+        let code = jit::run_program(
+            &checked.program,
+            checked.types,
+            checked.defer,
+            &["program".to_string()],
+        )
+        .unwrap_or_else(|e| panic!("{name} failed to run: {e}"));
         assert_eq!(code, 0, "{name}: self-asserting example did not exit 0");
     }
 }

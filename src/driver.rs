@@ -59,6 +59,10 @@ pub struct Checked {
     /// before this index belongs to another file. A `--debug` build uses it to attribute
     /// DWARF line info to the user's own source only.
     pub imported_items: usize,
+    /// The deferred-value coloring: which expressions evaluate to a deferred (promise)
+    /// value, and whether any `@` primitive launch is reachable. Codegen reads it to emit
+    /// the promise representation and forces; empty for pure programs.
+    pub defer: crate::deferral::DeferInfo,
 }
 
 /// Read, lex, parse, resolve `<<` imports (relative to `file`'s directory), and
@@ -75,6 +79,24 @@ pub fn front_end(file: &Path) -> Result<Checked, FrontEndError> {
     let program = parser::parse(&tokens)
         .map_err(|e| FrontEndError::at(&path, &source, &e.span, &e.message))?;
 
+    // The `@` marker names a leaf IO primitive, which only the corelib/runtime may
+    // define; user code merely *calls* one. Reject an `@`-prefixed declaration in the
+    // program's own source with a source-located diagnostic (a bare parse error would be
+    // cryptic). Checked before `link` so only the user's items are scanned, never a
+    // built-in module's.
+    if let Some((span, name)) = first_at_declaration(&program) {
+        return Err(FrontEndError::at(
+            &path,
+            &source,
+            span,
+            &format!(
+                "`{name}` cannot be declared here: `@` marks a built-in IO primitive \
+                 (like `@sleep` from core.time), which only the corelib defines — user \
+                 code calls one, it does not declare one"
+            ),
+        ));
+    }
+
     // The source file's own item count, captured before linking prepends imported items.
     let own_item_count = program.items.len();
     let base_dir = file.parent().unwrap_or_else(|| Path::new("."));
@@ -86,11 +108,27 @@ pub fn front_end(file: &Path) -> Result<Checked, FrontEndError> {
         .check_program(&program)
         .map_err(|e| FrontEndError::at(&path, &source, e.span(), &e.to_string()))?;
 
+    // Detect whether the program uses an `@` leaf IO primitive (post-typecheck,
+    // pre-codegen). Reads no types and adds none, so the check above is unaffected; it only
+    // decides whether codegen runs the entry on a scheduler fiber.
+    let defer = crate::deferral::analyze(&program);
+
     Ok(Checked {
         program,
         types,
         source,
         imported_items,
+        defer,
+    })
+}
+
+/// The span and name of the first top-level declaration whose name starts with `@`, if
+/// any. Used to reject a user-written `@` primitive declaration (they are corelib-only).
+fn first_at_declaration(program: &ast::Program) -> Option<(&Span, &str)> {
+    program.items.iter().find_map(|item| match item {
+        ast::Item::FunctionDecl(d) if d.name.starts_with('@') => Some((&d.span, d.name.as_str())),
+        ast::Item::VarDecl(d) if d.name.starts_with('@') => Some((&d.span, d.name.as_str())),
+        _ => None,
     })
 }
 

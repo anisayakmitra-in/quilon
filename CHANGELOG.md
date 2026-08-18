@@ -6,6 +6,20 @@ All notable changes to Quilon are documented here.
 
 ### Added
 
+- **Concurrency runtime — the `@sleep` leaf IO primitive ([#120](https://github.com/assapir/quilon/issues/120)).**
+  The first Quilon-visible surface of the colorless implicit-futures model: `@sleep`
+  (in the new `core.time` module), an effect-only pause. `@sleep(secs)` takes seconds
+  (a fractional `Num`, like Python's `time.sleep`) and **waits right there** on the
+  current fiber, then execution continues in program order; it yields `$` (Unit). The
+  program's entry runs on the single-threaded fiber scheduler so `@sleep` has a fiber to
+  park on — but **only when the program uses an `@` primitive**, so pure programs are
+  byte-identical (the emitted LLVM IR is unchanged; zero overhead). The `@` marker names
+  a leaf IO primitive and is **corelib-only**: user code calls one but cannot declare
+  one, and the type system is untouched (`@sleep` is a plain `Num -> $`, no `Task`/
+  `Future` type). This lands the runtime surface; the *deferred value* story — a
+  value-returning primitive whose result threads lazily and is forced at a strict
+  operation, giving automatic overlap — arrives with a later primitive (`@read`). See
+  `examples/deferred_values.ql`.
 - **Uniform `Result` layout — a `Result` of any payload flows through a generic
   `(r :: Result)` parameter/return.** Every `Result` now has a single canonical LLVM
   shape `{ i8 tag, {ptr,i64} slot }`: a `Text` or array payload fills the slot

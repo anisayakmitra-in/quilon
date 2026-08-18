@@ -504,6 +504,29 @@ impl<'a> Parser<'a> {
                 self.advance();
                 Ok(Expr::Unit { span })
             }
+            TokenKind::At => {
+                // A leaf IO primitive reference: `@sleep`. `@` fuses with the following
+                // identifier into the primitive's name (`@sleep`), so a call `@sleep(x)`
+                // is an ordinary call of the ident `@sleep` (the postfix `(...)` is applied
+                // by the caller). The name carries its `@` so codegen and the taint pass
+                // recognize the deferring primitive by name.
+                let at_span = token.span.clone();
+                self.advance();
+                let ident = self.peek();
+                if ident.kind != TokenKind::Ident {
+                    return Err(ParseError {
+                        message: format!(
+                            "Expected a primitive name after `@`, got {:?}",
+                            ident.kind
+                        ),
+                        span: ident.span.clone(),
+                    });
+                }
+                let name = format!("@{}", ident.text);
+                let span = self.span(at_span.start, ident.span.end);
+                self.advance();
+                Ok(Expr::Ident { name, span })
+            }
             TokenKind::Ident => {
                 // A bare single-parameter lambda: `x => body` or `x :: Type => body`.
                 // Detected before consuming the ident as a plain reference: an ident
