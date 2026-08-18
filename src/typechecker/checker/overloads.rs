@@ -96,6 +96,20 @@ impl TypeChecker {
                 ret: Some(Type::Unit),
             },
         );
+
+        // `@sleep(ms :: Num) -> Num` — the first deferring leaf IO primitive (documented
+        // in `core.time`). Calling it launches a sleep and yields a *deferred* `Num`;
+        // codegen lowers it to the runtime's `__sleep_launch`, and the deferred-taint pass
+        // treats any `@`-named call as a launch. Registered as a built-in (like `print`)
+        // so it needs no `.ql` body — deferral is a runtime property, invisible here, so
+        // the signature is an ordinary `Num -> Num` and overload resolution is untouched.
+        self.add_overload(
+            "@sleep",
+            Overload {
+                params: vec![Type::Num],
+                ret: Some(Type::Num),
+            },
+        );
     }
 
     /// Add one member to the overload set `name`.
