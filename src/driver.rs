@@ -108,10 +108,12 @@ pub fn front_end(file: &Path) -> Result<Checked, FrontEndError> {
         .check_program(&program)
         .map_err(|e| FrontEndError::at(&path, &source, e.span(), &e.to_string()))?;
 
-    // Detect whether the program uses an `@` leaf IO primitive (post-typecheck,
-    // pre-codegen). Reads no types and adds none, so the check above is unaffected; it only
-    // decides whether codegen runs the entry on a scheduler fiber.
-    let defer = crate::deferral::analyze(&program);
+    // Deferred-value analysis (post-typecheck, pre-codegen): whether an `@` primitive is
+    // reached, and the taint / force-set for value-returning primitives. Reads no types and
+    // adds none, so the check above is unaffected. The `@read` launch sites need the source
+    // to render `path:line:col`, which only lives here — so fill them in now.
+    let mut defer = crate::deferral::analyze(&program);
+    defer.set_read_sites(crate::deferral::read_call_sites(&program, &path, &source));
 
     Ok(Checked {
         program,
