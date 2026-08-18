@@ -56,8 +56,9 @@ fn type_error_reports_line_col_and_caret() {
 
 #[test]
 fn lexer_error_reports_line_col_and_caret() {
-    // `@` is not a valid token.
-    let src = "^ = () -> Num => @\n";
+    // `#` is not a valid token. (`@` used to be invalid, but now marks a deferring
+    // primitive like `@sleep`, so it is a real token.)
+    let src = "^ = () -> Num => #\n";
     let (ok, stderr) = check("lex", src);
 
     assert!(!ok, "expected non-zero exit, stderr was: {stderr}");

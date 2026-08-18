@@ -39,8 +39,15 @@ fn tool_available(tool: &str) -> bool {
 const EVERY_INTRINSIC: &str = r#"
 << core.io
 << core.test
+<< core.time
 
 ^ = (args :: []Text, env :: [][]Text) -> $ => <
+  ~ The deferral intrinsics: __sleep_launch (launch), __force_num (force at `+`),
+  ~ __scope_enter/__scope_join (this block's join), __run_fiber_main (the entry runs
+  ~ on a scheduler fiber because deferral is used).
+  slept = @sleep(0)
+  assertEq(slept + 0, 0)
+
   ~ __argv_to_text_array / __envp_to_pairs come from these parameters existing.
   assert(args.size >= 1)
   assert(env.size >= 0)
@@ -159,8 +166,8 @@ fn every_intrinsic_resolves_under_the_jit() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The program above is only a gate on all 22 intrinsics for as long as it actually
-/// reaches all 22. Emit its IR and check every exported symbol appears, so a program
+/// The program above is only a gate on every intrinsic for as long as it actually
+/// reaches them all. Emit its IR and check every exported symbol appears, so a program
 /// that quietly stops covering one fails here instead of leaving a hole in the gate.
 #[test]
 fn the_smoke_program_reaches_every_intrinsic() {

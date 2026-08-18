@@ -1158,3 +1158,54 @@ fn run_overload_call_uses_the_member_defined_above_it() {
         33,
     );
 }
+
+// --- Deferred values (colorless implicit futures) ------------------------------------
+//
+// `@sleep(ms)` launches a sleep and returns a *deferred* `Num` that forces to `ms`.
+// These assert CORRECTNESS of the deferral machinery through the JIT — deferred values
+// thread through bindings and force to the right result at the strict-operation frontier.
+// (Wall-clock overlap is proven by the runtime's own scheduler test; an exit code cannot
+// observe timing.) They import `core.time`, so they run through the linked front end.
+
+/// Two independent launches, each bound, then forced together at the arithmetic frontier:
+/// the exit code is their summed values (10 + 20), proving both threaded through correctly.
+#[test]
+fn run_deferred_two_launches_force_at_arithmetic() {
+    assert_exit_linked(
+        "<< core.time\n^ = () -> Num => <\n  a = @sleep(10)\n  b = @sleep(20)\n  a + b\n>",
+        30,
+    );
+}
+
+/// A launch used directly as an operand (no binding) forces at the operator.
+#[test]
+fn run_deferred_direct_operands() {
+    assert_exit_linked("<< core.time\n^ = () -> Num => @sleep(15) + @sleep(5)", 20);
+}
+
+/// Deferral threads through plain rebindings and a value read more than once; the force
+/// is memoized, so `a` used twice launches once and both reads see the same value.
+#[test]
+fn run_deferred_threads_through_rebindings() {
+    assert_exit_linked(
+        "<< core.time\n^ = () -> Num => <\n  a = @sleep(7)\n  b = a\n  b + a\n>",
+        14,
+    );
+}
+
+/// A bound-but-never-used launch is joined by its enclosing `< >` block (structured
+/// concurrency: a launched effect never vanishes), and the block still returns its value.
+#[test]
+fn run_deferred_unused_launch_is_scope_joined() {
+    assert_exit_linked("<< core.time\n^ = () -> Num => <\n  x = @sleep(0)\n  9\n>", 9);
+}
+
+/// A function whose body is a deferred value forces at its return, so deferral does not
+/// leak across the call boundary: the caller's arithmetic sees a ready `Num`.
+#[test]
+fn run_deferred_forced_at_function_return() {
+    assert_exit_linked(
+        "<< core.time\nnap = (ms :: Num) -> Num => @sleep(ms)\n^ = () -> Num => nap(12) + nap(9)",
+        21,
+    );
+}
