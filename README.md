@@ -32,7 +32,7 @@ See **[LANGUAGE.md](./docs/LANGUAGE.md)** for the full reference — types, modu
 What guides the design:
 
 - **Should make me laugh** — if a feature is a delight, that alone earns it a place.
-- **Colorless concurrency** — implicit futures on cooperative fibers; concurrency follows data dependence, not program order. No `async`/`await`.
+- **Colorless concurrency** — implicit futures on cooperative fibers; no `async`/`await`.
 - **Fail loud, never silent** — invalid operations error (a compile error when we can see it, else a crash); never a silent no-op, clamp, or magic sentinel.
 - **Overloading, not generics** — ad-hoc overloading is the only polymorphism.
 - **Eat the rich** — APIs expose everything up front; parsing and computing happen only when you touch it.
