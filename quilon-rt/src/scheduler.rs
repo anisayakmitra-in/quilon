@@ -43,12 +43,12 @@ enum Park {
     /// map the token back to this fiber when it fires. Source-agnostic: a socket
     /// today, files/pipes later.
     Readiness(Token),
-    /// Park until the promise cell at this address is fulfilled by another fiber.
-    /// Backs `__force_text`: forcing a deferred value whose producing fiber has not
-    /// finished parks here; [`wake_promise`] re-readies the parked fiber(s) when the
-    /// producer stores its result. The address is the promise cell's identity, not a
-    /// dereferenced pointer — the scheduler only ever compares it.
-    Promise(usize),
+    /// Park until another fiber wakes this address. A general one-fiber-waits-for-another
+    /// rendezvous keyed by an opaque `usize`: [`wake_address`] re-readies every fiber parked
+    /// on it. Backs both forcing a deferred value (the address is the promise cell) and the
+    /// single-reader stdin gate (the address is a fixed sentinel). The scheduler only ever
+    /// compares the address; it never dereferences it.
+    Waiting(usize),
 }
 
 type FiberCoroutine = Coroutine<(), Park, (), DefaultStack>;
@@ -71,10 +71,10 @@ struct Scheduler {
     /// Fibers parked on source readiness, keyed by the token they wait on. Exactly
     /// one fiber owns a token at a time (it owns the source), so this is 1:1.
     readiness_waiters: HashMap<Token, usize>,
-    /// Fibers parked on a promise, keyed by the promise cell's address. More than one
-    /// fiber may force the same deferred value, so this is 1:many — every waiter is
-    /// re-readied when the promise is fulfilled.
-    promise_waiters: HashMap<usize, Vec<usize>>,
+    /// Fibers parked on an address (a promise cell, or the stdin gate). More than one
+    /// fiber may wait on the same address, so this is 1:many — every waiter is
+    /// re-readied when the address is woken.
+    address_waiters: HashMap<usize, Vec<usize>>,
 }
 
 impl Scheduler {
@@ -85,7 +85,7 @@ impl Scheduler {
             ready: VecDeque::new(),
             timers: Vec::new(),
             readiness_waiters: HashMap::new(),
-            promise_waiters: HashMap::new(),
+            address_waiters: HashMap::new(),
         }
     }
 
@@ -184,27 +184,26 @@ pub(crate) fn park_on_readiness(token: Token) {
     CURRENT_YIELDER.set(yielder);
 }
 
-/// Park the current fiber until the promise cell at `address` is fulfilled. Backs
-/// forcing a deferred value: the caller re-checks the promise's state after every
-/// wake (a wake is an invitation to look, never a guarantee), so a spurious or
-/// shared wake simply re-parks. Must be called from within a fiber (panics otherwise).
-pub(crate) fn park_on_promise(address: usize) {
+/// Park the current fiber until another fiber wakes `address`. The caller re-checks its own
+/// condition after every wake (a wake is an invitation to look, never a guarantee), so a
+/// spurious or shared wake simply re-parks. Must be called from within a fiber (panics
+/// otherwise).
+pub(crate) fn park_on_address(address: usize) {
     let yielder = CURRENT_YIELDER.get();
     assert!(
         !yielder.is_null(),
-        "park_on_promise() called outside a fiber"
+        "park_on_address() called outside a fiber"
     );
     // SAFETY: `yielder` points at the live `Yielder` for this fiber (see `sleep`).
-    unsafe { (*yielder).suspend(Park::Promise(address)) };
+    unsafe { (*yielder).suspend(Park::Waiting(address)) };
     CURRENT_YIELDER.set(yielder);
 }
 
-/// Re-ready every fiber parked on the promise at `address` (its producer just stored
-/// the result). Called from the producing fiber right after it marks the promise
-/// ready. A no-op if nothing is waiting (the value was produced before any force).
-pub(crate) fn wake_promise(address: usize) {
+/// Re-ready every fiber parked on `address`. Called from the fiber that just made the waited
+/// condition true (a promise fulfilled, the stdin gate released). A no-op if nothing waits.
+pub(crate) fn wake_address(address: usize) {
     with_scheduler(|scheduler| {
-        if let Some(waiters) = scheduler.promise_waiters.remove(&address) {
+        if let Some(waiters) = scheduler.address_waiters.remove(&address) {
             for id in waiters {
                 scheduler.ready.push_back(id);
             }
@@ -294,10 +293,10 @@ pub fn run<F: FnOnce() + 'static>(main: F) {
                     scheduler.fibers[id] = Some(fiber);
                     scheduler.readiness_waiters.insert(token, id);
                 }),
-                CoroutineResult::Yield(Park::Promise(address)) => with_scheduler(|scheduler| {
+                CoroutineResult::Yield(Park::Waiting(address)) => with_scheduler(|scheduler| {
                     scheduler.fibers[id] = Some(fiber);
                     scheduler
-                        .promise_waiters
+                        .address_waiters
                         .entry(address)
                         .or_default()
                         .push(id);
@@ -316,10 +315,18 @@ pub fn run<F: FnOnce() + 'static>(main: F) {
             }
         }
 
-        // Ready queue is empty: either everything finished, or fibers are parked on
-        // a timer, a source's readiness, or both. Compute the nearest timer as the
-        // poll timeout (`None` = block until a source fires); break only when nothing
-        // is parked.
+        // Ready queue is empty: either everything finished, or fibers are parked on a timer,
+        // a source's readiness, or both. Compute the nearest timer as the poll timeout
+        // (`None` = block until a source fires); break only when nothing is parked.
+        //
+        // `address_waiters` (fibers forcing a promise or waiting on the stdin gate) is
+        // deliberately NOT part of the termination test: a fiber only waits on an address
+        // when another fiber will wake it, and that other fiber makes progress by running or
+        // by parking on readiness/a timer — never solely on an address itself (a producing
+        // read fiber parks on readiness while it holds the stdin gate). So whenever an address
+        // waiter exists, `ready`/`timers`/`readiness_waiters` is non-empty too; reaching the
+        // break with address waiters left would be a genuine deadlock, and stopping is the
+        // right response to that rather than blocking forever.
         let (next_deadline, readiness_parked) = with_scheduler(|scheduler| {
             let next = scheduler.timers.iter().map(|(d, _)| *d).min();
             (next, !scheduler.readiness_waiters.is_empty())

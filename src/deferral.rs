@@ -7,11 +7,11 @@
 //!  * `uses_deferral` — whether the program reaches ANY `@` primitive. Gates running the
 //!    entry on a scheduler fiber; a program that uses none is compiled byte-identically.
 //!  * the **taint** — which expressions may evaluate to a *deferred* value (a promise, from a
-//!    value-returning `@` primitive like `@read`), and the **force-set** (`force_sites`): the
+//!    value-returning `@` primitive like `@readStdin`), and the **force-set** (`force_sites`): the
 //!    exact expression spans where the code generator must force such a value because a strict
 //!    primitive is about to read its bytes, or it would otherwise escape.
 //!
-//! Taint is a forward dataflow. A value is deferred iff it flows from `@read` through only
+//! Taint is a forward dataflow. A value is deferred iff it flows from `@readStdin` through only
 //! *lazy carriers* — a `=` binding, and the arms/result of `?`/ternary/blocks — without
 //! crossing a *strict* slot. At every strict slot (arithmetic/comparison/logical operands,
 //! `?`/ternary/match scrutinee, `print`/`eprint`/`write` and native/`@` args, indexing, field
@@ -25,9 +25,9 @@ use crate::ast::{Expr, InterpPart, Item, MethodDecl, Program, Statement, TypeDef
 use crate::lexer::{ROOT_FILE, Span};
 use std::collections::{HashMap, HashSet};
 
-/// The corelib name of the value-returning stdin read primitive; `@read()` evaluates to a
-/// deferred `Text`.
-const READ_PRIMITIVE: &str = "@read";
+/// The corelib name of the value-returning stdin read primitive; `@readStdin()` evaluates to
+/// a deferred `Text`.
+const READ_PRIMITIVE: &str = "@readStdin";
 
 /// What the analysis hands to codegen.
 #[derive(Debug, Default, Clone)]
@@ -35,16 +35,14 @@ pub struct DeferInfo {
     /// Whether any `@` leaf IO primitive is reachable. Gates running the entry on a
     /// scheduler fiber: a program that uses no `@` primitive is byte-identical to before.
     pub uses_deferral: bool,
-    /// Spans of expressions whose runtime value may be a deferred (promise) `Text`.
-    /// Informational (the force-set below is what codegen acts on); useful for tests.
-    deferred: HashSet<Span>,
     /// The force-set: spans of expressions whose generated value codegen must force in
     /// place, because a deferred value sits where a strict primitive reads its bytes or
-    /// would escape. Empty for pure programs.
+    /// would escape. Empty for pure programs — the whole codegen-visible surface of the
+    /// taint analysis.
     force_sites: HashSet<Span>,
-    /// Human-readable launch site (`path:line:col`) for each `@read` call, keyed by the
-    /// `@read` identifier's span, so a read fault reports where the IO was called. Filled by
-    /// the driver (which holds the source); empty in unit tests and IR-only paths.
+    /// Human-readable launch site (`path:line:col`) for each `@readStdin` call, keyed by the
+    /// `@readStdin` identifier's span, so a read fault reports where the IO was called. Filled
+    /// by the driver (which holds the source); empty in unit tests and IR-only paths.
     read_sites: HashMap<Span, String>,
 }
 
@@ -54,17 +52,12 @@ impl DeferInfo {
         self.force_sites.contains(span)
     }
 
-    /// Whether the expression at `span` may evaluate to a deferred value.
-    pub fn is_deferred(&self, span: &Span) -> bool {
-        self.deferred.contains(span)
-    }
-
-    /// The launch-site description for the `@read` whose identifier is at `span`, if known.
+    /// The launch-site description for the `@readStdin` whose identifier is at `span`, if known.
     pub fn read_site(&self, span: &Span) -> Option<&str> {
         self.read_sites.get(span).map(String::as_str)
     }
 
-    /// Install the `@read` launch sites (see [`read_call_sites`]).
+    /// Install the `@readStdin` launch sites (see [`read_call_sites`]).
     pub fn set_read_sites(&mut self, read_sites: HashMap<Span, String>) {
         self.read_sites = read_sites;
     }
@@ -86,16 +79,15 @@ pub fn analyze(program: &Program) -> DeferInfo {
 
     DeferInfo {
         uses_deferral,
-        deferred: taint.deferred,
         force_sites: taint.force_sites,
         read_sites: HashMap::new(),
     }
 }
 
-/// Map each `@read` call in the ROOT source to a `path:line:col` launch-site string, keyed by
-/// the `@read` identifier's span — the origin a read fault reports. Only root-file spans are
-/// resolved, since `source` is the root file; a call reached through an imported module (not a
-/// pattern the corelib uses) is simply left without a site.
+/// Map each `@readStdin` call in the ROOT source to a `path:line:col` launch-site string,
+/// keyed by the `@readStdin` identifier's span — the origin a read fault reports. Only
+/// root-file spans are resolved, since `source` is the root file; a call reached through an
+/// imported module (not a pattern the corelib uses) is simply left without a site.
 pub fn read_call_sites(program: &Program, path: &str, source: &str) -> HashMap<Span, String> {
     let mut sites = HashMap::new();
     let mut record = |span: &Span| {
@@ -138,7 +130,6 @@ fn references_at_primitive(expr: &Expr) -> bool {
 /// The deferred-value taint accumulator.
 #[derive(Default)]
 struct Taint {
-    deferred: HashSet<Span>,
     force_sites: HashSet<Span>,
 }
 
@@ -180,9 +171,12 @@ impl Taint {
             }
             Expr::Ident { name, .. } => env.is_deferred(name),
 
-            // `@read()` is the one deferred-producing primitive; every other call delivers a
-            // ready value (its own body forced its result). Arguments are strict.
+            // `@readStdin()` is the one deferred-producing primitive; every other call delivers
+            // a ready value (its own body forced its result). The callee expression and the
+            // arguments are all strict slots (a deferred value used inside `func` — e.g. a
+            // called lambda — or passed as an argument is forced there).
             Expr::Call { func, args, .. } => {
+                self.strict(func, env);
                 for arg in args {
                     self.strict(arg, env);
                 }
@@ -269,10 +263,6 @@ impl Taint {
             }
             Expr::Block { stmts, .. } => self.visit_block(stmts, env),
         };
-
-        if deferred {
-            self.deferred.insert(expr.span().clone());
-        }
         deferred
     }
 
@@ -333,12 +323,12 @@ impl Scope {
     }
 }
 
-/// Whether `func`/`args` is a call to the `@read` primitive (`@read()`, no arguments).
+/// Whether `func`/`args` is a call to the `@readStdin` primitive (`@readStdin()`, no arguments).
 fn is_read_call(func: &Expr, args: &[Expr]) -> bool {
     matches!(func, Expr::Ident { name, .. } if name == READ_PRIMITIVE) && args.is_empty()
 }
 
-/// Run `visit` on the `@read` identifier span of every `@read()` call in `expr`.
+/// Run `visit` on the `@readStdin` identifier span of every `@readStdin()` call in `expr`.
 fn walk_read_calls(expr: &Expr, record: &mut impl FnMut(&Span)) {
     for_each_subexpr(expr, &mut |e| {
         if let Expr::Call { func, args, .. } = e
@@ -454,7 +444,6 @@ mod tests {
         let i = info("^ = () -> Num => 1 + 2 * 3");
         assert!(!i.uses_deferral);
         assert_eq!(i.force_sites.len(), 0);
-        assert_eq!(i.deferred.len(), 0);
     }
 
     #[test]
@@ -479,13 +468,12 @@ mod tests {
         // `@sleep` returns `$`, not a value: it is never deferred and never forced.
         let i = info("^ = () -> $ => <\n  @sleep(1)\n  $\n>");
         assert_eq!(i.force_sites.len(), 0);
-        assert_eq!(i.deferred.len(), 0);
     }
 
     #[test]
     fn bound_read_is_deferred_and_forced_at_a_strict_use() {
-        // `x = @read()` binds a deferred Text (lazy); the comparison forces it once.
-        let src = "<< core.io\n^ = () -> Num => <\n  x = @read()\n  x == \"hi\" ? 0 : 1\n>";
+        // `x = @readStdin()` binds a deferred Text (lazy); the comparison forces it once.
+        let src = "<< core.io\n^ = () -> Num => <\n  x = @readStdin()\n  x == \"hi\" ? 0 : 1\n>";
         let i = info(src);
         assert!(i.uses_deferral);
         // Exactly one force: the `x` read inside the comparison. The binding stays lazy.
@@ -494,14 +482,14 @@ mod tests {
 
     #[test]
     fn read_directly_in_a_strict_slot_forces_at_the_call() {
-        // No binding: the `@read()` value is consumed strictly (compared) right away.
-        let src = "<< core.io\n^ = () -> Num => @read() == \"hi\" ? 0 : 1";
+        // No binding: the `@readStdin()` value is consumed strictly (compared) right away.
+        let src = "<< core.io\n^ = () -> Num => @readStdin() == \"hi\" ? 0 : 1";
         assert_eq!(force_count(src), 1);
     }
 
     #[test]
     fn read_passed_to_a_call_forces_at_the_argument() {
-        let src = "<< core.io\n^ = () -> Num => <\n  x = @read()\n  print(x)\n  0\n>";
+        let src = "<< core.io\n^ = () -> Num => <\n  x = @readStdin()\n  print(x)\n  0\n>";
         // The `print(x)` argument is a strict slot: one force.
         assert_eq!(force_count(src), 1);
     }
@@ -509,7 +497,7 @@ mod tests {
     #[test]
     fn a_bound_but_unused_read_is_not_forced() {
         // Launched (eager) but never read strictly: no force site. The launch still runs.
-        let src = "<< core.io\n^ = () -> Num => <\n  x = @read()\n  0\n>";
+        let src = "<< core.io\n^ = () -> Num => <\n  x = @readStdin()\n  0\n>";
         let i = info(src);
         assert!(i.uses_deferral);
         assert_eq!(force_count(src), 0);
@@ -518,7 +506,7 @@ mod tests {
     #[test]
     fn read_flows_lazily_through_a_second_binding() {
         let src =
-            "<< core.io\n^ = () -> Num => <\n  x = @read()\n  y = x\n  y == \"hi\" ? 0 : 1\n>";
+            "<< core.io\n^ = () -> Num => <\n  x = @readStdin()\n  y = x\n  y == \"hi\" ? 0 : 1\n>";
         // Two lazy bindings, forced once at the comparison.
         assert_eq!(force_count(src), 1);
     }
@@ -527,7 +515,7 @@ mod tests {
     fn read_through_a_ternary_arm_forces_at_the_result_use() {
         // Ternary arms are lazy carriers: the deferred value survives the `?` and is forced
         // where the ternary's result is used strictly (the outer comparison).
-        let src = "<< core.io\n^ = () -> Num => <\n  x = @read()\n  chosen = true ? x : \"z\"\n  chosen == \"hi\" ? 0 : 1\n>";
+        let src = "<< core.io\n^ = () -> Num => <\n  x = @readStdin()\n  chosen = true ? x : \"z\"\n  chosen == \"hi\" ? 0 : 1\n>";
         assert_eq!(force_count(src), 1);
     }
 }

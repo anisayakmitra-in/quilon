@@ -24,19 +24,24 @@
 //! GC: the promise cell is GC-allocated so its stored `data` pointer keeps the result bytes
 //! alive; the reader fiber holds the cell on its (GC-scanned) stack from launch until it
 //! returns, and the forcing fiber holds it across the park — so a collection at any point in
-//! the deferred lifetime finds it. `tests` proves a not-yet-resumed reader fiber's captured
-//! cell survives collection.
+//! the deferred lifetime finds it. (A parked fiber's stack is scanned by the collector's
+//! push-roots callback; `scheduler`/`net` tests prove that scanning directly.)
+//!
+//! Stdin is a single serial stream, so all reads are serialized through a **gate**: a reader
+//! acquires the gate before it touches fd 0 and releases it when done, so at most one reader
+//! ever owns the descriptor and the shared line buffer at a time. Two concurrent `@readStdin`
+//! calls therefore read consecutive lines in launch order rather than racing the fd.
 
 use crate::io::write_to_fd;
 use crate::mem::{__alloc, QlSlice, alloc_text};
 use crate::process::__exit;
 use crate::scheduler::{
-    deregister_readiness, park_on_promise, park_on_readiness, register_readiness,
-    reregister_readiness, spawn, wake_promise,
+    deregister_readiness, park_on_address, park_on_readiness, register_readiness,
+    reregister_readiness, spawn, wake_address,
 };
 use mio::unix::SourceFd;
 use mio::{Interest, Token};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::io;
 use std::os::raw::c_void;
 use std::ptr;
@@ -91,7 +96,12 @@ pub extern "C" fn __read_launch(site_data: *const u8, site_len: i64) -> QlSlice 
     // holds `promise` on its own (GC-scanned) stack for its whole life, so the cell — and
     // the bytes it will store — stay reachable across any collection while pending.
     spawn(move || {
-        let bytes = match read_stdin_line() {
+        // Serialize on the stdin gate: only one reader owns fd 0 and the line buffer at a
+        // time, so concurrent launches read consecutive lines instead of racing the fd.
+        acquire_stdin();
+        let read = read_stdin_line();
+        release_stdin();
+        let bytes = match read {
             Ok(bytes) => bytes,
             // SAFETY: `promise` is the live cell this closure owns.
             Err(error) => unsafe { fail_read(promise, &error) },
@@ -103,7 +113,7 @@ pub extern "C" fn __read_launch(site_data: *const u8, site_len: i64) -> QlSlice 
             (*promise).len = text.len;
             (*promise).state = READY;
         }
-        wake_promise(address);
+        wake_address(address);
     });
 
     QlSlice {
@@ -137,7 +147,7 @@ pub extern "C" fn __force_text(promise_ptr: *const c_void) -> QlSlice {
                 }
             };
         }
-        park_on_promise(address);
+        park_on_address(address);
     }
 }
 
@@ -161,17 +171,45 @@ unsafe fn fail_read(promise: *const Promise, error: &io::Error) -> ! {
 }
 
 thread_local! {
-    /// Bytes read past the newline of the previous `@read`, kept so the next `@read`
+    /// Bytes read past the newline of the previous `@readStdin`, kept so the next call
     /// continues the same stdin stream line-by-line rather than dropping them.
     static STDIN_LEFTOVER: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+    /// Whether a reader currently owns stdin (the gate). See [`acquire_stdin`].
+    static STDIN_BUSY: Cell<bool> = const { Cell::new(false) };
 }
 
 const STDIN_FD: i32 = 0;
 
-/// Read one line from stdin (fd 0), the source `@read` reads. Thin wrapper over
+/// The stdin gate's wake address: a fixed sentinel (the address of a unique static), distinct
+/// from any promise cell (a heap pointer), so `park_on_address`/`wake_address` on it never
+/// collide with a promise.
+fn stdin_gate() -> usize {
+    static GATE: u8 = 0;
+    &GATE as *const u8 as usize
+}
+
+/// Take ownership of stdin, waiting until any current reader releases it. Because the tier is
+/// single-threaded and cooperative, the check-and-claim is atomic w.r.t. scheduling: a woken
+/// waiter that finds the gate already re-taken simply parks again.
+fn acquire_stdin() {
+    while STDIN_BUSY.with(Cell::get) {
+        park_on_address(stdin_gate());
+    }
+    STDIN_BUSY.with(|busy| busy.set(true));
+}
+
+/// Release stdin and wake every reader waiting for the gate; they re-contend, and the first to
+/// run claims it.
+fn release_stdin() {
+    STDIN_BUSY.with(|busy| busy.set(false));
+    wake_address(stdin_gate());
+}
+
+/// Read one line from stdin (fd 0), the source `@readStdin` reads. Thin wrapper over
 /// [`read_line_from`]: it takes the persistent leftover buffer OUT of its thread-local while
 /// reading (so no `RefCell` borrow is held across the fiber park) and stores what remains
-/// back afterwards, so successive `@read`s continue the same stream.
+/// back afterwards, so successive reads continue the same stream. The caller holds the stdin
+/// gate, so there is exactly one reader in here at a time.
 fn read_stdin_line() -> io::Result<Vec<u8>> {
     let mut buffer = STDIN_LEFTOVER.with(|slot| std::mem::take(&mut *slot.borrow_mut()));
     let result = read_line_from(STDIN_FD, &mut buffer);
@@ -276,6 +314,7 @@ mod tests {
     use std::os::raw::c_int;
     use std::sync::Mutex;
     use std::sync::OnceLock;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::mpsc;
     use std::time::Duration;
 
@@ -359,12 +398,45 @@ mod tests {
                 (*promise).len = text.len;
                 (*promise).state = READY;
             }
-            wake_promise(address);
+            wake_address(address);
         });
         QlSlice {
             data: promise as *const c_void,
             len: DEFERRED_SENTINEL,
         }
+    }
+
+    #[test]
+    fn stdin_gate_serializes_readers() {
+        // Two fibers contend for the stdin gate. The gate must keep at most one inside the
+        // acquire/release section at a time (so concurrent `@readStdin` launches never race
+        // fd 0), even though each yields (sleeps) while holding it.
+        static CONCURRENT: AtomicUsize = AtomicUsize::new(0);
+        static MAX_CONCURRENT: AtomicUsize = AtomicUsize::new(0);
+        CONCURRENT.store(0, Ordering::SeqCst);
+        MAX_CONCURRENT.store(0, Ordering::SeqCst);
+
+        on_gc_thread(|| {
+            run(|| {
+                for _ in 0..2 {
+                    spawn(|| {
+                        acquire_stdin();
+                        let now = CONCURRENT.fetch_add(1, Ordering::SeqCst) + 1;
+                        MAX_CONCURRENT.fetch_max(now, Ordering::SeqCst);
+                        // Yield while holding the gate; a second reader must wait, not enter.
+                        sleep(Duration::from_millis(10));
+                        CONCURRENT.fetch_sub(1, Ordering::SeqCst);
+                        release_stdin();
+                    });
+                }
+            });
+        });
+
+        assert_eq!(
+            MAX_CONCURRENT.load(Ordering::SeqCst),
+            1,
+            "the stdin gate let two readers hold stdin at once"
+        );
     }
 
     #[test]

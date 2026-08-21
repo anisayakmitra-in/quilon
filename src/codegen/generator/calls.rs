@@ -36,7 +36,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             return Err("Only direct function calls supported".to_string());
         };
 
-        // A leaf `@` IO primitive (`@sleep`, `@read`), recognized by the `@` the parser fused
+        // A leaf `@` IO primitive (`@sleep`, `@readStdin`), recognized by the `@` the parser fused
         // into the name. Handled before every other dispatch — the name is not an
         // overload/method/constructor. The `@`-identifier span carries the call's launch site.
         if let Some(primitive) = func_name.strip_prefix('@') {
@@ -168,7 +168,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     /// `@`-identifier (the call's launch site), used to attach an origin to a deferred value.
     ///
     /// `@sleep(seconds :: Num) -> $` is an effect-only pause: it waits on the current fiber and
-    /// yields `$`. `@read() -> Text` is the first value-returning primitive: it *launches* a
+    /// yields `$`. `@readStdin() -> Text` is the first value-returning primitive: it *launches* a
     /// background stdin read and returns a DEFERRED `Text` immediately — the fiber only waits
     /// when the taint pass's force-set says a strict primitive reads the bytes.
     fn generate_at_primitive(
@@ -195,16 +195,19 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // `@sleep` yields `$` (Unit).
                 Ok(self.unit_value().into())
             }
-            "read" => {
+            "readStdin" => {
                 if !args.is_empty() {
-                    return Err(format!("@read expects no arguments, got {}", args.len()));
+                    return Err(format!(
+                        "@readStdin expects no arguments, got {}",
+                        args.len()
+                    ));
                 }
                 let (site_ptr, site_len) = self.read_launch_site(site)?;
                 let read = self.get_intrinsic("__read_launch")?;
                 let call = self
                     .builder
                     .build_call(read, &[site_ptr.into(), site_len.into()], "read")
-                    .map_err(ctx("Failed to call @read"))?;
+                    .map_err(ctx("Failed to call @readStdin"))?;
                 // The result is a DEFERRED `Text` (`{ promise, -1 }`); the force-set decides
                 // where it is forced. Nothing here dereferences it.
                 Self::call_result_to_basic(call)
@@ -214,8 +217,8 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
 
     /// Build the `(i8* data, i64 len)` launch-site argument for `__read_launch` from the
-    /// `@read` call's `site` span: a `path:line:col` string constant when the driver recorded
-    /// one, else a null pointer / zero length (the runtime reports `<unknown>` on a fault).
+    /// `@readStdin` call's `site` span: a `path:line:col` string constant when the driver
+    /// recorded one, else a null pointer / zero length (runtime reports `<unknown>` on fault).
     fn read_launch_site(
         &mut self,
         site: &Span,
@@ -225,7 +228,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let global = self
                     .builder
                     .build_global_string_ptr(description, "read_site")
-                    .map_err(ctx("Failed to build @read launch site"))?;
+                    .map_err(ctx("Failed to build @readStdin launch site"))?;
                 let len = self
                     .context
                     .i64_type()
