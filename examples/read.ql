@@ -6,7 +6,7 @@
 ~
 ~ This example needs input, so the no-input examples gate does not run it (it is compile-only
 ~ there). Run it as documented; it self-asserts and exits 0 for that input:
-~   echo hello | cargo run -- run examples/deferred_read.ql
+~   echo hello | cargo run -- run examples/read.ql
 
 << core.io
 << core.test

@@ -1017,7 +1017,7 @@ line from stdin. It is the first *value-returning* `@` primitive, so it is the d
 calling it **launches** the read and returns a deferred `Text` immediately; the value threads
 lazily through bindings and is **forced** only where a strict operation reads its bytes — a
 comparison, `print`, a native call. On end-of-input it yields the empty `Text` `""`. See
-`examples/deferred_read.ql`.
+`examples/read.ql`.
 
 ```quilon
 << core.io
@@ -1028,7 +1028,7 @@ comparison, `print`, a native call. On end-of-input it yields the empty `Text` `
   assertEq(line, "hello")     ~ the comparison FORCES it: parks until ready, then reads bytes
   0
 >
-~ run as:  echo hello | quilon run examples/deferred_read.ql
+~ run as:  echo hello | quilon run examples/read.ql
 ```
 
 `@read` and `^` and any helper are unmarked — only the leaf `@read` carries `@`. Binding

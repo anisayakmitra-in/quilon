@@ -22,7 +22,7 @@ const EXPECT_COMPILE_ERROR: &[&str] = &["type_error.ql", "global_computed.ql"];
 /// Examples that must COMPILE but cannot be auto-run here: they read stdin (`@read`), which
 /// this gate does not provide, so running them would block. Their runtime behavior is proven
 /// by the dedicated `read_stdin_test`, which drives them with a controlled stdin.
-const NEEDS_STDIN: &[&str] = &["deferred_read.ql"];
+const NEEDS_STDIN: &[&str] = &["read.ql"];
 
 fn ql_files() -> Vec<PathBuf> {
     let mut files: Vec<PathBuf> = std::fs::read_dir(examples_dir())

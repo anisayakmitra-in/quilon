@@ -26,7 +26,7 @@ All notable changes to Quilon are documented here.
   before it exits (effects never vanish). Also fixes checking a corelib file directly
   (`quilon check corelib/time.ql`): the front-end now trusts a bundled corelib source to
   declare `@` primitives while still rejecting them in user code. See
-  `examples/deferred_read.ql` (run it with piped input); cross-source *overlap* is
+  `examples/read.ql` (run it with piped input); cross-source *overlap* is
   demonstrated later with a networked primitive.
 - **Concurrency runtime — the `@sleep` leaf IO primitive ([#120](https://github.com/assapir/quilon/issues/120)).**
   The first Quilon-visible surface of the colorless implicit-futures model: `@sleep`
