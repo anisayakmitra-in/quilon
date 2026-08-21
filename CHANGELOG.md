@@ -25,10 +25,9 @@ All notable changes to Quilon are documented here.
   fault reports where the IO was called; a scope runs its launched reads to completion
   before it exits (effects never vanish). Also fixes checking a corelib file directly
   (`quilon check corelib/time.ql`): the front-end now trusts a bundled corelib source to
-  declare `@` primitives while still rejecting them in user code. On end-of-input
-  `@readStdin()` returns the empty `Text` `""`. See `examples/read.ql` (pipe it a line to
-  watch a real value flow); cross-source *overlap* is demonstrated later with a networked
-  primitive.
+  declare `@` primitives while still rejecting them in user code. See
+  `examples/readStdin.ql` (pipe it a line to watch a real value flow); cross-source *overlap*
+  is demonstrated later with a networked primitive.
 - **Concurrency runtime — the `@sleep` leaf IO primitive ([#120](https://github.com/assapir/quilon/issues/120)).**
   The first Quilon-visible surface of the colorless implicit-futures model: `@sleep`
   (in the new `core.time` module), an effect-only pause. `@sleep(secs)` takes seconds

@@ -54,26 +54,78 @@ pub const DEFERRED_SENTINEL: i64 = -1;
 const PENDING: i64 = 0;
 const READY: i64 = 1;
 
-/// A single deferred value's cell. GC-allocated; only ever accessed by the one producing
-/// fiber (which writes it once) and the forcing fiber(s) (which read after a wake) — never
-/// concurrently, since the tier is single-threaded and cooperative, so plain fields need no
-/// synchronization.
-#[repr(C)]
-struct Promise {
+/// A deferred value's cell — the generic core every value-returning `@` primitive shares.
+/// GC-allocated so any GC pointer inside `value` stays scannable; single-threaded and
+/// cooperative, so its plain fields need no synchronization (the one producer fiber writes it
+/// once, forcing fibers read after a wake). Opaque to the code generator, which only ever
+/// carries the cell pointer around and hands it back to a `force` intrinsic.
+pub(crate) struct Promise<T> {
     /// `PENDING` until the producer stores its result, then `READY`.
     state: i64,
-    /// The result `Text`'s bytes (GC-owned) and byte length, valid once `state` is `READY`.
-    data: *const c_void,
-    len: i64,
-    /// The `@`-call launch site (origin), reported if the IO faults — so a fault points at
-    /// where the read was *called*, not merely where it was forced. Null when unknown.
-    site_data: *const u8,
-    site_len: i64,
+    /// The produced value, present once `state` is `READY`.
+    value: Option<T>,
 }
 
-/// `@read()`: launch a background read of one line from stdin and return the deferred
-/// `Text` immediately (the calling fiber does not park here). `site_data`/`site_len`
-/// describe the `@read` call site for fault reporting; either may be null/zero if unknown.
+/// Launch `producer` on a background fiber and return its promise cell immediately — eager
+/// launch: the producer runs whether or not the result is ever forced. The producer parks
+/// however it needs (readiness, the stdin gate, ...); when it returns, its value is stored and
+/// every forcing fiber woken. Generic over the produced type, so a new value-returning `@`
+/// primitive (file/socket/HTTP) is just a different producer — no new park/promise plumbing.
+///
+/// The cell is GC-allocated so a GC pointer inside `T` is scanned, and the producer fiber
+/// holds the cell on its own (GC-scanned) stack until it returns, so the cell — and the value
+/// it will hold — stay reachable across any collection while pending.
+pub(crate) fn launch<T: 'static>(producer: impl FnOnce() -> T + 'static) -> *mut Promise<T> {
+    let cell = __alloc(std::mem::size_of::<Promise<T>>() as i64) as *mut Promise<T>;
+    // SAFETY: `__alloc` returned a fresh, aligned cell of exactly this size; initialize it
+    // before anyone can observe it (`ptr::write`, since the memory is uninitialized as `T`).
+    unsafe {
+        ptr::write(
+            cell,
+            Promise {
+                state: PENDING,
+                value: None,
+            },
+        );
+    }
+    let address = cell as usize;
+    spawn(move || {
+        let value = producer();
+        // SAFETY: `cell` is still the live cell this closure owns; single-threaded, so storing
+        // the result cannot race a force.
+        unsafe {
+            (*cell).value = Some(value);
+            (*cell).state = READY;
+        }
+        wake_address(address);
+    });
+    cell
+}
+
+/// Force a deferred value: park the current fiber until `cell` is resolved, then return the
+/// value (memoized — a second force is O(1)). `T: Copy` so the value is read out without
+/// disturbing the cell that other forces still read.
+///
+/// # Safety
+/// `cell` is a live promise for the whole force (the taint pass keeps it reachable to here).
+pub(crate) unsafe fn force<T: Copy>(cell: *mut Promise<T>) -> T {
+    let address = cell as usize;
+    loop {
+        // Re-read every iteration: a wake is an invitation to look, not a guarantee, and the
+        // producer's store happens-before our resume (cooperative single thread).
+        // SAFETY: `cell` is a live promise (see the contract).
+        if unsafe { (*cell).state } == READY {
+            // SAFETY: `READY` means the value was stored; `T: Copy`, so this copies it out.
+            return unsafe { (*cell).value }.expect("a resolved promise has a value");
+        }
+        park_on_address(address);
+    }
+}
+
+/// `@readStdin()`: launch a background read of one line from stdin and return the deferred
+/// `Text` immediately (the calling fiber does not park here). A THIN wrapper over the generic
+/// [`launch`], with a stdin-specific producer. `site_data`/`site_len` describe the call site
+/// for fault reporting; either may be null/zero if unknown.
 ///
 /// # Safety contract (upheld by the compiler)
 /// `site_data` is null or points to `site_len` readable bytes that outlive the program
@@ -81,50 +133,16 @@ struct Promise {
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[unsafe(no_mangle)]
 pub extern "C" fn __read_launch(site_data: *const u8, site_len: i64) -> QlSlice {
-    let promise = __alloc(std::mem::size_of::<Promise>() as i64) as *mut Promise;
-    // SAFETY: `__alloc` returned a fresh, suitably-aligned cell of exactly this size.
-    unsafe {
-        (*promise).state = PENDING;
-        (*promise).data = ptr::null();
-        (*promise).len = 0;
-        (*promise).site_data = site_data;
-        (*promise).site_len = site_len;
-    }
-    let address = promise as usize;
-
-    // Eager launch: the read runs whether or not the result is ever forced. The reader
-    // holds `promise` on its own (GC-scanned) stack for its whole life, so the cell — and
-    // the bytes it will store — stay reachable across any collection while pending.
-    spawn(move || {
-        // Serialize on the stdin gate: only one reader owns fd 0 and the line buffer at a
-        // time, so concurrent launches read consecutive lines instead of racing the fd.
-        acquire_stdin();
-        let read = read_stdin_line();
-        release_stdin();
-        let bytes = match read {
-            Ok(bytes) => bytes,
-            // SAFETY: `promise` is the live cell this closure owns.
-            Err(error) => unsafe { fail_read(promise, &error) },
-        };
-        let text = alloc_text(&bytes);
-        // SAFETY: still the live cell; single-threaded, so this write cannot race a force.
-        unsafe {
-            (*promise).data = text.data;
-            (*promise).len = text.len;
-            (*promise).state = READY;
-        }
-        wake_address(address);
-    });
-
+    let cell = launch(move || read_stdin_text(site_data, site_len));
     QlSlice {
-        data: promise as *const c_void,
+        data: cell as *const c_void,
         len: DEFERRED_SENTINEL,
     }
 }
 
-/// Force a deferred `Text`: park the current fiber until the promise at `promise_ptr` is
-/// fulfilled, then return its bytes. Only the code generator calls this, and only after its
-/// force check saw [`DEFERRED_SENTINEL`], so `promise_ptr` is always a live [`Promise`].
+/// Force a deferred `Text`: the per-representation C-ABI wrapper over the generic [`force`].
+/// Only the code generator calls this, and only after its force check saw [`DEFERRED_SENTINEL`],
+/// so `promise_ptr` is always a live `Text` promise.
 ///
 /// # Safety contract (upheld by the compiler)
 /// `promise_ptr` is a pointer previously returned in the first field of a deferred
@@ -132,32 +150,34 @@ pub extern "C" fn __read_launch(site_data: *const u8, site_len: i64) -> QlSlice 
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[unsafe(no_mangle)]
 pub extern "C" fn __force_text(promise_ptr: *const c_void) -> QlSlice {
-    let promise = promise_ptr as *const Promise;
-    let address = promise as usize;
-    loop {
-        // Re-read every iteration: a wake is an invitation to look, not a guarantee, and the
-        // producer's store happens-before our resume (cooperative single thread).
-        // SAFETY: `promise` is a live cell for the whole force (see the contract).
-        if unsafe { (*promise).state } == READY {
-            // SAFETY: `READY` means `data`/`len` were stored and are final.
-            return unsafe {
-                QlSlice {
-                    data: (*promise).data,
-                    len: (*promise).len,
-                }
-            };
-        }
-        park_on_address(address);
+    // SAFETY: per the contract, this is a live `Text` promise (a `Promise<QlSlice>`).
+    unsafe { force(promise_ptr as *mut Promise<QlSlice>) }
+}
+
+/// The `@readStdin` producer: read one line from stdin as a `Text`, serialized on the stdin
+/// gate so concurrent reads take consecutive lines rather than racing fd 0. Yields the empty
+/// `Text` at end-of-input; a genuine IO error faults with the launch site (fail-loud).
+///
+/// # Safety contract (upheld by the compiler)
+/// `site_data` is null or points to `site_len` readable bytes valid for the program's life.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+fn read_stdin_text(site_data: *const u8, site_len: i64) -> QlSlice {
+    acquire_stdin();
+    let read = read_stdin_line();
+    release_stdin();
+    match read {
+        Ok(bytes) => alloc_text(&bytes),
+        Err(error) => fail_read(site_data, site_len, &error),
     }
 }
 
-/// Report a fatal stdin read error against the promise's launch site, then terminate the
+/// Report a fatal stdin read error against the `@readStdin` launch site, then terminate the
 /// process (fail-loud). A genuine IO error on stdin is neither EOF nor `WouldBlock`.
 ///
-/// # Safety
-/// `promise` is a live cell.
-unsafe fn fail_read(promise: *const Promise, error: &io::Error) -> ! {
-    let (site_data, site_len) = unsafe { ((*promise).site_data, (*promise).site_len) };
+/// # Safety contract (upheld by the compiler)
+/// `site_data` is null or points to `site_len` readable bytes.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+fn fail_read(site_data: *const u8, site_len: i64, error: &io::Error) -> ! {
     let site = if site_data.is_null() || site_len <= 0 {
         "<unknown>".to_string()
     } else {
@@ -165,7 +185,7 @@ unsafe fn fail_read(promise: *const Promise, error: &io::Error) -> ! {
         let bytes = unsafe { std::slice::from_raw_parts(site_data, site_len as usize) };
         String::from_utf8_lossy(bytes).into_owned()
     };
-    let message = format!("runtime error: @read at {site} failed: {error}\n");
+    let message = format!("runtime error: @readStdin at {site} failed: {error}\n");
     write_to_fd(2, message.as_bytes());
     __exit(1)
 }
@@ -376,32 +396,17 @@ mod tests {
         (fds[0], fds[1])
     }
 
-    /// Mirror of [`__read_launch`] but reading one line from an arbitrary `fd` (a pipe), so a
-    /// test can drive the producer with a controllable writer. Same shape: allocate the cell,
-    /// spawn the reader (eager launch), return the deferred `{promise, -1}` representation.
+    /// Like [`__read_launch`] but reading one line from an arbitrary `fd` (a pipe), so a test
+    /// can drive the producer with a controllable writer. Exercises the generic [`launch`] core
+    /// with a pipe-reading producer and returns the deferred `{promise, -1}` representation.
     fn launch_read_from_fd(fd: i32) -> QlSlice {
-        let promise = __alloc(std::mem::size_of::<Promise>() as i64) as *mut Promise;
-        unsafe {
-            (*promise).state = PENDING;
-            (*promise).data = ptr::null();
-            (*promise).len = 0;
-            (*promise).site_data = ptr::null();
-            (*promise).site_len = 0;
-        }
-        let address = promise as usize;
-        spawn(move || {
+        let cell = launch(move || {
             let mut buffer = Vec::new();
             let bytes = read_line_from(fd, &mut buffer).expect("pipe read");
-            let text = alloc_text(&bytes);
-            unsafe {
-                (*promise).data = text.data;
-                (*promise).len = text.len;
-                (*promise).state = READY;
-            }
-            wake_address(address);
+            alloc_text(&bytes)
         });
         QlSlice {
-            data: promise as *const c_void,
+            data: cell as *const c_void,
             len: DEFERRED_SENTINEL,
         }
     }
