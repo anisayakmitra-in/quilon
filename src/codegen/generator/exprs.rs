@@ -7,7 +7,20 @@
 use super::*;
 
 impl<'ctx> CodeGenerator<'ctx> {
+    /// Lower `expr` to a value, then force it in place if the deferred-taint pass marked this
+    /// span a force site (a deferred `Text` sitting where a strict primitive reads its bytes).
+    /// The force is the ONE seam where deferral becomes visible to codegen; everywhere else a
+    /// deferred value is threaded as an ordinary `Text`. For a non-force-site span (every
+    /// expression in a pure program) this is a direct call — byte-identical to before.
     pub(super) fn generate_expr(&mut self, expr: &Expr) -> Result<BasicValueEnum<'ctx>, String> {
+        let value = self.generate_expr_inner(expr)?;
+        if self.defer.is_force_site(expr.span()) {
+            return self.force_deferred_text(value);
+        }
+        Ok(value)
+    }
+
+    fn generate_expr_inner(&mut self, expr: &Expr) -> Result<BasicValueEnum<'ctx>, String> {
         // Attribute the instructions this expression lowers to its source location, so the
         // DWARF line table maps generated code back to the `.ql` line (no-op without debug).
         self.set_debug_loc(expr.span());
@@ -159,6 +172,74 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.generate_expr(&call)
             }
         }
+    }
+
+    /// Emit the force of a possibly-deferred `Text`: if `value`'s length field is the deferred
+    /// sentinel (`-1`), its first field is a promise pointer — call `__force_text` to park
+    /// until the value is ready and read its bytes (memoized); otherwise pass the ready `Text`
+    /// straight through. A runtime branch, because a force site fed by a `?`/ternary can be
+    /// deferred on one path and ready on the other. Non-`Text` values (never deferred in this
+    /// tier) pass through untouched.
+    fn force_deferred_text(
+        &mut self,
+        value: BasicValueEnum<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>, String> {
+        let text_ty = self.ptr_len_struct_type();
+        let BasicValueEnum::StructValue(deferred) = value else {
+            return Ok(value);
+        };
+        if deferred.get_type() != text_ty {
+            return Ok(value);
+        }
+
+        let length = self
+            .builder
+            .build_extract_value(deferred, 1, "deferred_len")
+            .map_err(ctx("Failed to read deferred length"))?
+            .into_int_value();
+        let sentinel = self
+            .context
+            .i64_type()
+            .const_int(quilon_rt::deferred::DEFERRED_SENTINEL as u64, true);
+        let is_deferred = self
+            .builder
+            .build_int_compare(inkwell::IntPredicate::EQ, length, sentinel, "is_deferred")
+            .map_err(ctx("Failed to test deferred sentinel"))?;
+
+        let ready_block = self.builder.get_insert_block().unwrap();
+        let function = ready_block.get_parent().unwrap();
+        let force_block = self.context.append_basic_block(function, "force");
+        let cont_block = self.context.append_basic_block(function, "force_cont");
+        self.builder
+            .build_conditional_branch(is_deferred, force_block, cont_block)
+            .map_err(ctx("Failed to branch on deferred sentinel"))?;
+
+        // Deferred: extract the promise pointer and force it (park-until-ready, memoized).
+        self.builder.position_at_end(force_block);
+        let promise = self
+            .builder
+            .build_extract_value(deferred, 0, "deferred_promise")
+            .map_err(ctx("Failed to read deferred promise"))?
+            .into_pointer_value();
+        let force_fn = self.get_intrinsic("__force_text")?;
+        let forced = Self::call_result_to_basic(
+            self.builder
+                .build_call(force_fn, &[promise.into()], "forced")
+                .map_err(ctx("Failed to call __force_text"))?,
+        )?;
+        let force_end_block = self.builder.get_insert_block().unwrap();
+        self.builder
+            .build_unconditional_branch(cont_block)
+            .map_err(ctx("Failed to branch out of force"))?;
+
+        // Join: the ready value (unchanged) or the forced value.
+        self.builder.position_at_end(cont_block);
+        let phi = self
+            .builder
+            .build_phi(text_ty, "forced_or_ready")
+            .map_err(ctx("Failed to build force phi"))?;
+        phi.add_incoming(&[(&value, ready_block), (&forced, force_end_block)]);
+        Ok(phi.as_basic_value())
     }
 
     pub(super) fn generate_binop(
