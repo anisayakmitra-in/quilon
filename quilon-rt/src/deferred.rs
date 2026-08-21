@@ -3,25 +3,25 @@
 //! Deferred values — the runtime half of Quilon's colorless implicit futures.
 //!
 //! A value-returning `@` primitive does not park the calling fiber and hand back bytes;
-//! it *launches* the IO on a background fiber and returns a **promise** immediately. The
-//! promise flows through the program as an ordinary value (a `Text`, here) and is *forced*
+//! it *launches* the IO on a background fiber and returns a **deferred value** immediately. The
+//! value flows through the program as an ordinary one (a `Text`, here) and is *forced*
 //! only when a strict primitive is about to read its concrete bytes. Forcing parks the
 //! current fiber until the producing fiber has stored the result, then reads it — memoized,
 //! so a second force is O(1).
 //!
-//! [`__read_launch`] backs `@read` (read one line from stdin): it allocates a [`Promise`],
+//! [`__read_launch`] backs `@read` (read one line from stdin): it allocates a [`Deferred`],
 //! spawns a reader fiber that parks on stdin readiness and fills the cell, and returns the
 //! deferred [`QlSlice`] representation. [`__force_text`] is the force: park-until-ready,
 //! then return the stored bytes.
 //!
 //! Representation (hybrid, per the concurrency design): a `Text` is a `{ ptr, i64 }`
 //! `QlSlice`. A *ready* `Text` carries its byte length (`>= 0`) in the second field; a
-//! *deferred* `Text` carries [`DEFERRED_SENTINEL`] (`-1`) there and the promise pointer in
+//! *deferred* `Text` carries [`DEFERRED_SENTINEL`] (`-1`) there and the deferred pointer in
 //! the first — a real byte length is never negative, so the two are unambiguous. The code
 //! generator forces exactly at the strict-use sites the deferred-taint pass marks, and only
 //! for values that pass can be deferred; pure code never sees a sentinel and pays nothing.
 //!
-//! GC: the promise cell is GC-allocated so its stored `data` pointer keeps the result bytes
+//! GC: the deferred cell is GC-allocated so its stored `data` pointer keeps the result bytes
 //! alive; the reader fiber holds the cell on its (GC-scanned) stack from launch until it
 //! returns, and the forcing fiber holds it across the park — so a collection at any point in
 //! the deferred lifetime finds it. (A parked fiber's stack is scanned by the collector's
@@ -47,55 +47,79 @@ use std::os::raw::c_void;
 use std::ptr;
 
 /// The second (`i64`) field of a deferred `Text`'s `QlSlice`: a real byte length is never
-/// negative, so `-1` unambiguously flags "the first field is a promise pointer, not data".
+/// negative, so `-1` unambiguously flags "the first field is a deferred pointer, not data".
 /// The code generator's force check compares against this exact value.
 pub const DEFERRED_SENTINEL: i64 = -1;
 
-const PENDING: i64 = 0;
-const READY: i64 = 1;
-
-/// A deferred value's cell — the generic core every value-returning `@` primitive shares.
-/// GC-allocated so any GC pointer inside `value` stays scannable; single-threaded and
-/// cooperative, so its plain fields need no synchronization (the one producer fiber writes it
-/// once, forcing fibers read after a wake). Opaque to the code generator, which only ever
-/// carries the cell pointer around and hands it back to a `force` intrinsic.
-pub(crate) struct Promise<T> {
-    /// `PENDING` until the producer stores its result, then `READY`.
-    state: i64,
-    /// The produced value, present once `state` is `READY`.
-    value: Option<T>,
+/// A deferred value's lifecycle. Carrying the resolved value INSIDE `Ready` makes
+/// "ready but value absent" unrepresentable — a whole class of bug a bool/flag plus a
+/// separate value field would allow. (Distinct from [`DEFERRED_SENTINEL`], which is the
+/// C-ABI representation tag, not a lifecycle state.)
+enum DeferredState<T> {
+    /// The producer has not finished yet.
+    Pending,
+    /// The producer stored its result.
+    Ready(T),
 }
 
-/// Launch `producer` on a background fiber and return its promise cell immediately — eager
+/// A deferred value's cell — the generic core every value-returning `@` primitive shares.
+/// GC-allocated so any GC pointer inside a `Ready` value stays scannable; single-threaded and
+/// cooperative, so its `state` needs no synchronization (the one producer fiber writes it
+/// once, forcing fibers read after a wake). Opaque to the code generator, which only ever
+/// carries the cell pointer around and hands it back to a `force` intrinsic.
+pub(crate) struct Deferred<T> {
+    state: DeferredState<T>,
+}
+
+/// Launch `producer` on a background fiber and return its deferred cell immediately — eager
 /// launch: the producer runs whether or not the result is ever forced. The producer parks
 /// however it needs (readiness, the stdin gate, ...); when it returns, its value is stored and
 /// every forcing fiber woken. Generic over the produced type, so a new value-returning `@`
-/// primitive (file/socket/HTTP) is just a different producer — no new park/promise plumbing.
+/// primitive (file/socket/HTTP) is just a different producer — no new park/deferred plumbing.
 ///
 /// The cell is GC-allocated so a GC pointer inside `T` is scanned, and the producer fiber
 /// holds the cell on its own (GC-scanned) stack until it returns, so the cell — and the value
 /// it will hold — stay reachable across any collection while pending.
-pub(crate) fn launch<T: 'static>(producer: impl FnOnce() -> T + 'static) -> *mut Promise<T> {
-    let cell = __alloc(std::mem::size_of::<Promise<T>>() as i64) as *mut Promise<T>;
+pub(crate) fn launch<T: 'static>(producer: impl FnOnce() -> T + 'static) -> *mut Deferred<T> {
+    let size = std::mem::size_of::<Deferred<T>>();
+    let cell = __alloc(size as i64) as *mut Deferred<T>;
+    // The cell must be a fresh, GC-zeroed allocation, never a live one we would clobber.
+    // `GC_malloc` zeroes, so a fresh cell reads as all-zero bytes; reading the not-yet-typed
+    // memory as `u8` is well-defined (no invalid bit patterns), unlike reading it as `T`.
+    // Debug-only, evaluated after the non-null guard so the byte read never touches null.
+    debug_assert!(
+        !cell.is_null(),
+        "GC allocation for a Deferred returned null"
+    );
+    debug_assert!(
+        unsafe { std::slice::from_raw_parts(cell as *const u8, size) }
+            .iter()
+            .all(|&byte| byte == 0),
+        "initializing a Deferred cell that is not fresh"
+    );
     // SAFETY: `__alloc` returned a fresh, aligned cell of exactly this size; initialize it
     // before anyone can observe it (`ptr::write`, since the memory is uninitialized as `T`).
     unsafe {
         ptr::write(
             cell,
-            Promise {
-                state: PENDING,
-                value: None,
+            Deferred {
+                state: DeferredState::Pending,
             },
         );
     }
     let address = cell as usize;
     spawn(move || {
         let value = producer();
+        // A cell is resolved exactly once; a second resolve would clobber live data (and, once
+        // M:N lands, signal a real race). Guard it in debug builds.
+        debug_assert!(
+            matches!(unsafe { &(*cell).state }, DeferredState::Pending),
+            "resolving an already-resolved Deferred"
+        );
         // SAFETY: `cell` is still the live cell this closure owns; single-threaded, so storing
-        // the result cannot race a force.
+        // the result cannot race a force. The assignment drops the prior `Pending` (a no-op).
         unsafe {
-            (*cell).value = Some(value);
-            (*cell).state = READY;
+            (*cell).state = DeferredState::Ready(value);
         }
         wake_address(address);
     });
@@ -107,18 +131,19 @@ pub(crate) fn launch<T: 'static>(producer: impl FnOnce() -> T + 'static) -> *mut
 /// disturbing the cell that other forces still read.
 ///
 /// # Safety
-/// `cell` is a live promise for the whole force (the taint pass keeps it reachable to here).
-pub(crate) unsafe fn force<T: Copy>(cell: *mut Promise<T>) -> T {
+/// `cell` is a live deferred for the whole force (the taint pass keeps it reachable to here).
+pub(crate) unsafe fn force<T: Copy>(cell: *mut Deferred<T>) -> T {
     let address = cell as usize;
     loop {
         // Re-read every iteration: a wake is an invitation to look, not a guarantee, and the
         // producer's store happens-before our resume (cooperative single thread).
-        // SAFETY: `cell` is a live promise (see the contract).
-        if unsafe { (*cell).state } == READY {
-            // SAFETY: `READY` means the value was stored; `T: Copy`, so this copies it out.
-            return unsafe { (*cell).value }.expect("a resolved promise has a value");
+        // SAFETY: `cell` is a live deferred (see the contract).
+        match unsafe { &(*cell).state } {
+            // `T: Copy`, so this reads the value out without disturbing the cell that other
+            // forces still read (memoized).
+            DeferredState::Ready(value) => return *value,
+            DeferredState::Pending => park_on_address(address),
         }
-        park_on_address(address);
     }
 }
 
@@ -142,16 +167,16 @@ pub extern "C" fn __read_launch(site_data: *const u8, site_len: i64) -> QlSlice 
 
 /// Force a deferred `Text`: the per-representation C-ABI wrapper over the generic [`force`].
 /// Only the code generator calls this, and only after its force check saw [`DEFERRED_SENTINEL`],
-/// so `promise_ptr` is always a live `Text` promise.
+/// so `deferred_ptr` is always a live `Text` deferred.
 ///
 /// # Safety contract (upheld by the compiler)
-/// `promise_ptr` is a pointer previously returned in the first field of a deferred
+/// `deferred_ptr` is a pointer previously returned in the first field of a deferred
 /// `__read_launch` result and is still reachable (the taint pass keeps it live to here).
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[unsafe(no_mangle)]
-pub extern "C" fn __force_text(promise_ptr: *const c_void) -> QlSlice {
-    // SAFETY: per the contract, this is a live `Text` promise (a `Promise<QlSlice>`).
-    unsafe { force(promise_ptr as *mut Promise<QlSlice>) }
+pub extern "C" fn __force_text(deferred_ptr: *const c_void) -> QlSlice {
+    // SAFETY: per the contract, this is a live `Text` deferred (a `Deferred<QlSlice>`).
+    unsafe { force(deferred_ptr as *mut Deferred<QlSlice>) }
 }
 
 /// The `@readStdin` producer: read one line from stdin as a `Text`, serialized on the stdin
@@ -201,8 +226,8 @@ thread_local! {
 const STDIN_FD: i32 = 0;
 
 /// The stdin gate's wake address: a fixed sentinel (the address of a unique static), distinct
-/// from any promise cell (a heap pointer), so `park_on_address`/`wake_address` on it never
-/// collide with a promise.
+/// from any deferred cell (a heap pointer), so `park_on_address`/`wake_address` on it never
+/// collide with a deferred.
 fn stdin_gate() -> usize {
     static GATE: u8 = 0;
     &GATE as *const u8 as usize
@@ -398,7 +423,7 @@ mod tests {
 
     /// Like [`__read_launch`] but reading one line from an arbitrary `fd` (a pipe), so a test
     /// can drive the producer with a controllable writer. Exercises the generic [`launch`] core
-    /// with a pipe-reading producer and returns the deferred `{promise, -1}` representation.
+    /// with a pipe-reading producer and returns the deferred `{deferred, -1}` representation.
     fn launch_read_from_fd(fd: i32) -> QlSlice {
         let cell = launch(move || {
             let mut buffer = Vec::new();
@@ -458,7 +483,7 @@ mod tests {
     fn deferred_read_launches_and_forces_the_line() {
         // Proves the whole value-returning path: `@read` launches a background reader that
         // must PARK on stdin readiness (the writer is delayed), a separate fiber FORCES the
-        // deferred value (parking on the promise), and the read line flows through.
+        // deferred value (parking on the deferred), and the read line flows through.
         static GOT: Mutex<Vec<u8>> = Mutex::new(Vec::new());
         GOT.lock().unwrap().clear();
 
@@ -466,10 +491,10 @@ mod tests {
             let (read_fd, write_fd) = make_pipe();
             run(move || {
                 let deferred = launch_read_from_fd(read_fd);
-                let promise_ptr = deferred.data;
+                let deferred_ptr = deferred.data;
 
                 spawn(move || {
-                    let forced = __force_text(promise_ptr);
+                    let forced = __force_text(deferred_ptr);
                     let bytes = unsafe {
                         std::slice::from_raw_parts(forced.data as *const u8, forced.len as usize)
                     };
@@ -509,10 +534,10 @@ mod tests {
             }
             run(move || {
                 let deferred = launch_read_from_fd(read_fd);
-                let promise_ptr = deferred.data;
+                let deferred_ptr = deferred.data;
                 spawn(move || {
-                    let a = __force_text(promise_ptr);
-                    let b = __force_text(promise_ptr);
+                    let a = __force_text(deferred_ptr);
+                    let b = __force_text(deferred_ptr);
                     let read = |s: QlSlice| unsafe {
                         std::slice::from_raw_parts(s.data as *const u8, s.len as usize).to_vec()
                     };

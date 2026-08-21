@@ -45,7 +45,7 @@ enum Park {
     Readiness(Token),
     /// Park until another fiber wakes this address. A general one-fiber-waits-for-another
     /// rendezvous keyed by an opaque `usize`: [`wake_address`] re-readies every fiber parked
-    /// on it. Backs both forcing a deferred value (the address is the promise cell) and the
+    /// on it. Backs both forcing a deferred value (the address is the deferred cell) and the
     /// single-reader stdin gate (the address is a fixed sentinel). The scheduler only ever
     /// compares the address; it never dereferences it.
     Waiting(usize),
@@ -71,7 +71,7 @@ struct Scheduler {
     /// Fibers parked on source readiness, keyed by the token they wait on. Exactly
     /// one fiber owns a token at a time (it owns the source), so this is 1:1.
     readiness_waiters: HashMap<Token, usize>,
-    /// Fibers parked on an address (a promise cell, or the stdin gate). More than one
+    /// Fibers parked on an address (a deferred cell, or the stdin gate). More than one
     /// fiber may wait on the same address, so this is 1:many — every waiter is
     /// re-readied when the address is woken.
     address_waiters: HashMap<usize, Vec<usize>>,
@@ -200,7 +200,7 @@ pub(crate) fn park_on_address(address: usize) {
 }
 
 /// Re-ready every fiber parked on `address`. Called from the fiber that just made the waited
-/// condition true (a promise fulfilled, the stdin gate released). A no-op if nothing waits.
+/// condition true (a deferred fulfilled, the stdin gate released). A no-op if nothing waits.
 pub(crate) fn wake_address(address: usize) {
     with_scheduler(|scheduler| {
         if let Some(waiters) = scheduler.address_waiters.remove(&address) {
@@ -319,7 +319,7 @@ pub fn run<F: FnOnce() + 'static>(main: F) {
         // a source's readiness, or both. Compute the nearest timer as the poll timeout
         // (`None` = block until a source fires); break only when nothing is parked.
         //
-        // `address_waiters` (fibers forcing a promise or waiting on the stdin gate) is
+        // `address_waiters` (fibers forcing a deferred or waiting on the stdin gate) is
         // deliberately NOT part of the termination test: a fiber only waits on an address
         // when another fiber will wake it, and that other fiber makes progress by running or
         // by parking on readiness/a timer — never solely on an address itself (a producing
