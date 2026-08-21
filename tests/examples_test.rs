@@ -19,6 +19,11 @@ fn examples_dir() -> PathBuf {
 /// Examples that are intentionally rejected by the compiler (negative examples).
 const EXPECT_COMPILE_ERROR: &[&str] = &["type_error.ql", "global_computed.ql"];
 
+/// Examples that must COMPILE but cannot be auto-run here: they read stdin (`@read`), which
+/// this gate does not provide, so running them would block. Their runtime behavior is proven
+/// by the dedicated `read_stdin_test`, which drives them with a controlled stdin.
+const NEEDS_STDIN: &[&str] = &["deferred_read.ql"];
+
 fn ql_files() -> Vec<PathBuf> {
     let mut files: Vec<PathBuf> = std::fs::read_dir(examples_dir())
         .expect("examples/ should exist")
@@ -43,7 +48,9 @@ fn runnable_examples() -> Vec<PathBuf> {
         .into_iter()
         .filter(|p| {
             let name = p.file_name().unwrap().to_string_lossy().to_string();
-            !EXPECT_COMPILE_ERROR.contains(&name.as_str()) && defines_entry(p)
+            !EXPECT_COMPILE_ERROR.contains(&name.as_str())
+                && !NEEDS_STDIN.contains(&name.as_str())
+                && defines_entry(p)
         })
         .collect()
 }
