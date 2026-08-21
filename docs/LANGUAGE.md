@@ -994,7 +994,7 @@ overlap implicitly.
 statement it **waits right there** on the current fiber, then execution continues in program
 order. It carries no value, so nothing defers or forces yet. `now()` reads a **monotonic**
 clock (seconds as a `Num`); only *differences* between two readings are meaningful, so it
-measures elapsed time. See `examples/deferred_values.ql`.
+measures elapsed time. See `examples/sleep.ql`.
 
 ```quilon
 << core.time
