@@ -89,9 +89,30 @@ fn every_runnable_example_self_asserts() {
 
 /// Every runnable example is self-asserting: it exits 0 under the in-process JIT.
 /// (A failed in-language assertion exits 101, so any regression fails here.)
+/// Point the process's stdin at `/dev/null` so an example that reads stdin (`@readStdin`)
+/// sees end-of-input immediately and returns `""` instead of blocking on a live terminal.
+/// The examples run in-process (below), so this must be the real fd 0. `/dev/null` reads as
+/// instant EOF and — being non-pollable — never reaches the reactor, so no fiber ever parks
+/// on it. Harmless for every other example (none reads stdin). Best-effort: if `/dev/null`
+/// can't be opened, the run simply proceeds with the inherited stdin.
+fn silence_stdin() {
+    // SAFETY: `open`/`dup2` on standard descriptors; a failure is ignored (best-effort).
+    unsafe {
+        let devnull = libc::open(c"/dev/null".as_ptr(), libc::O_RDONLY);
+        if devnull >= 0 {
+            libc::dup2(devnull, 0);
+            if devnull != 0 {
+                libc::close(devnull);
+            }
+        }
+    }
+}
+
 #[test]
 fn runnable_examples_exit_zero() {
     let _guard = JIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    // Examples run in-process, so guarantee EOF stdin here (an example may `@readStdin`).
+    silence_stdin();
     for path in runnable_examples() {
         let name = path.file_name().unwrap().to_string_lossy().to_string();
         let checked = front_end(&path).unwrap_or_else(|e| panic!("{name} failed to compile: {e}"));
@@ -145,9 +166,11 @@ fn runnable_examples_match_across_jit_and_aot() {
     for src in runnable_examples() {
         let name = src.file_name().unwrap().to_string_lossy().to_string();
 
-        // In-process JIT: every self-asserting example exits 0.
+        // In-process JIT: every self-asserting example exits 0. Feed EOF stdin so an example
+        // that reads stdin (`@readStdin`) returns `""` immediately instead of blocking.
         let jit = Command::new(quilon)
             .args(["run", src.to_str().unwrap()])
+            .stdin(std::process::Stdio::null())
             .output()
             .expect("run quilon run");
         let jit_code = jit.status.code().unwrap_or(-1);
@@ -167,7 +190,10 @@ fn runnable_examples_match_across_jit_and_aot() {
                 String::from_utf8_lossy(&build.stderr)
             );
 
-            let native = Command::new(&bin).output().expect("run native binary");
+            let native = Command::new(&bin)
+                .stdin(std::process::Stdio::null())
+                .output()
+                .expect("run native binary");
             let native_code = native.status.code().unwrap_or(-1);
             assert_eq!(
                 native_code, 0,

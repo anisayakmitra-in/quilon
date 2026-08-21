@@ -805,6 +805,7 @@ The type checker verifies matches are exhaustive (use `_` to cover the rest). (S
 | `print(x) -> $` | Write `x` to stdout, **with a trailing newline**. Accepts a value of **any type**, rendered through its [`` ` `` render operator](#string-interpolation-and-the-render-operator) — so a `Bool` prints `True`/`False`, and records/sum types/arrays print via their default (or overridden) rendering. Returns `$` (Unit). A user `print` definition with a concrete signature *adds* an overload that wins for that type. |
 | `eprint(x) -> $` | Same, to stderr. Returns `$` (Unit). |
 | `write(content :: Text, fd :: Num) -> Num` | Write raw bytes (no newline) to a file descriptor; returns bytes written. |
+| `@readStdin() -> Text` | Read one line from stdin (without the trailing newline). A [leaf IO primitive](#concurrency--colorless-implicit-futures--in-progress): it launches the read and returns a **deferred** `Text` forced on first strict use. Yields `""` at end-of-input. |
 | `stdout`, `stderr` | The standard file descriptors. |
 
 ```quilon
@@ -933,15 +934,16 @@ Quilon uses a **conservative garbage collector** (Boehm). Heap values (`Text`, e
 
 > Colorless implicit futures on cooperative fibers: IO returns type-invisible deferreds, only strict operations force them — concurrency follows data dependence, not program order.
 
-> **Status: 🚧 in progress.** The model described below is locked; what runs today is its
-> first slice — the single-threaded fiber scheduler plus the `@sleep` leaf primitive (in
-> `core.time`), an effect-only **pause** (`@sleep(seconds) -> $`). Because a pause returns no
-> value, this slice is launch-and-wait only: the *deferred value* half of the model — a
-> value-returning `@` primitive whose result threads lazily and is forced at a strict
-> operation, giving automatic overlap — arrives with a later primitive such as `@read`. A
-> program's entry runs on the fiber scheduler only when it uses an `@` primitive, so pure
-> programs are byte-identical (zero overhead). What follows is the durable summary of the
-> locked model.
+> **Status: 🚧 in progress.** The model described below is locked, and its core now runs: the
+> single-threaded fiber scheduler, the effect-only `@sleep` **pause** (`@sleep(seconds) -> $`,
+> in `core.time`), and — the *deferred value* half — the value-returning `@readStdin` primitive
+> (`@readStdin() -> Text`, in `core.io`). `@readStdin` launches a stdin line read and hands back a
+> deferred `Text` that threads lazily through code and is **forced on use** at a strict
+> operation. What is not here yet: cross-source **overlap** as a showcase (two independent
+> reads finishing in max-time rather than sum-time) arrives with a networked primitive such as
+> `@get`; and the multicore (M:N) runtime. A program's entry runs on the fiber scheduler only
+> when it uses an `@` primitive, so pure programs are byte-identical (zero overhead). What
+> follows is the durable summary of the locked model.
 
 Quilon's concurrency is **colorless**: you write ordinary, blocking-*looking* code, and the
 runtime overlaps independent IO for you automatically. There is **no** `async`, **no**
@@ -1010,10 +1012,32 @@ Running the entry on the fiber scheduler is what lets `@sleep` park; `^` and any
 calls carry no marker, no `async`, no `await` — only the leaf `@sleep` is marked. `now()` is
 a plain (non-`@`) primitive — reading the clock is instant and never parks.
 
-**Where it is headed (`@read`/`@get`).** A *value-returning* `@` primitive is the deferred
-one: its result threads lazily through code and is forced only at a strict operation, so
-independent reads overlap automatically. Leaf primitives stay the only marked thing, and
-user code stays unmarked:
+**Runnable today (`@readStdin`, a deferred value).** `@readStdin() -> Text` (in `core.io`) reads one
+line from stdin. It is the first *value-returning* `@` primitive, so it is the deferred one:
+calling it **launches** the read and returns a deferred `Text` immediately; the value threads
+lazily through bindings and is **forced** only where a strict operation reads its bytes — a
+comparison, `print`, a native call. On end-of-input it yields the empty `Text` `""`. See
+`examples/readStdin.ql`.
+
+```quilon
+<< core.io
+<< core.test
+
+^ = () -> Num => <
+  line = @readStdin()     ~ launches the read; returns a deferred Text (no wait here)
+  assertEq(line, "")      ~ the comparison FORCES it; "" at end-of-input (no piped input)
+  0
+>
+~ pipe a line to see a real value flow:  echo hello | quilon run examples/readStdin.ql
+```
+
+`@readStdin` and `^` and any helper are unmarked — only the leaf `@readStdin` carries `@`.
+Binding `line` does not wait; the force is the `==` inside `assertEq`. (Because `print`/`eprint`
+force and write eagerly, per-fiber output stays in program order.)
+
+**Where it is headed (overlap, `@get`).** With a *networked* value-returning primitive,
+independent launches overlap automatically — the reason implicit futures matter. Leaf
+primitives stay the only marked thing, and user code stays unmarked:
 
 ```quilon
 ~ `@get` is a leaf IO primitive (stdlib/runtime) — the ONLY marked thing here.
@@ -1027,7 +1051,7 @@ loadDashboard = (user :: Text) -> Text => <
 >
 ```
 
-Only the leaf `@get`/`@read` is marked; `fetchJson` and `loadDashboard` are ordinary,
+Only the leaf `@get`/`@readStdin` is marked; `fetchJson` and `loadDashboard` are ordinary,
 unmarked user code, concurrency-capable for free.
 
 ---
@@ -1140,6 +1164,7 @@ pathological input.
 | Uniform `Result` layout: a `Result` of ANY payload (`Num`/`Text`/`[]Text`/composite) passes through a generic `(r :: Result)` param/return — powers `assertOk`/`assertNotOk` on `getEnv`/`getOpt` | ✅ |
 | Modules: `<< core.io`, `<< core.test`, `<< core.cli`, `<< core.time`, file-path imports, `>>` exports | ✅ |
 | I/O: `print` / `eprint` / `write` | ✅ |
+| I/O: `@readStdin` — deferred stdin line read, forced on use | ✅ |
 | Assertions: `<< core.test` (`assert` (+ `AssertOpts` message) / `assertEq` / `assertNotEq` / `assertOk` / `assertNotOk`; fail → exit 101) | ✅ |
 | CLI helpers: `<< core.cli` (`getEnv` / `hasFlag` / `getOpt`; both `--name value` and `--name=value`; flag names with or without `--`) | ✅ |
 | Conservative GC (Boehm) | ✅ |
@@ -1150,7 +1175,7 @@ pathological input.
 | Overloaded name passed as a value, or a closure as a param / return (higher-order) | ❌ |
 | Generic / polymorphic-capturing closures | ❌ |
 | String interpolation | ❌ |
-| [Colorless implicit-futures concurrency](#concurrency--colorless-implicit-futures--in-progress) — `@` leaf IO primitives, deferred values, force-at-strict-op: the fiber scheduler + the `@sleep` pause primitive land the first slice; deferred values, forcing, and overlap arrive with a value-returning primitive | 🚧 |
+| [Colorless implicit-futures concurrency](#concurrency--colorless-implicit-futures--in-progress) — `@` leaf IO primitives, deferred values, force-at-strict-op: the fiber scheduler, the `@sleep` pause, and the value-returning `@readStdin` (deferred `Text`, forced on use) run today; cross-source overlap (networked `@get`) and the multicore runtime are still to come | 🚧 |
 
 ---
 

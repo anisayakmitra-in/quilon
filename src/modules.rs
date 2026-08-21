@@ -109,26 +109,47 @@ impl Loader {
     }
 }
 
+// The bundled corelib module sources, embedded at compile time. Named once here so both the
+// import resolver (`builtin_source`) and the trusted-origin check (`is_corelib_source`) draw
+// from the same strings — they cannot drift.
+const CORE_IO: &str = include_str!("../corelib/io.ql");
+const CORE_TEST: &str = include_str!("../corelib/test.ql");
+const CORE_CLI: &str = include_str!("../corelib/cli.ql");
+const CORE_TIME: &str = include_str!("../corelib/time.ql");
+
+/// Every bundled corelib source — the ONE trusted origin allowed to declare `@` leaf IO
+/// primitives.
+const CORELIB_SOURCES: &[&str] = &[CORE_IO, CORE_TEST, CORE_CLI, CORE_TIME];
+
 /// Map a built-in dotted module name to its bundled source.
 fn builtin_source(name: &str) -> Option<&'static str> {
     match name {
-        "core.io" => Some(include_str!("../corelib/io.ql")),
+        "core.io" => Some(CORE_IO),
         // core.test — assertions (`assert` + wrappers) for self-verifying programs.
         // Depends transitively on core.io (its wrappers render values via `eprint`).
-        "core.test" => Some(include_str!("../corelib/test.ql")),
+        "core.test" => Some(CORE_TEST),
         // core.cli — thin, pure-Quilon helpers over the `^` entry point's
         // `args :: []Text` and `env :: [][]Text`.
-        "core.cli" => Some(include_str!("../corelib/cli.ql")),
+        "core.cli" => Some(CORE_CLI),
         // core.time — time-related leaf IO primitives (`@sleep`). Documentation-only:
         // `@sleep` is a compiler-provided built-in (lowered to the runtime scheduler),
         // like `print`/`write`, so importing the module makes intent explicit but merges
         // no items. It is the documented home of the deferring `@sleep` primitive.
-        "core.time" => Some(include_str!("../corelib/time.ql")),
+        "core.time" => Some(CORE_TIME),
         // Text is a built-in primitive type (like Num/Bool/arrays): its operations
         // (`+`, `.size`, `.length`) are compiler-intrinsic and need no import, so
         // there is intentionally no `core.text` module.
         _ => None,
     }
+}
+
+/// Whether `source` is verbatim one of the bundled corelib modules. The corelib is the one
+/// place allowed to DECLARE `@` leaf IO primitives; the front-end uses this to trust a file
+/// it is asked to check directly (e.g. `quilon check corelib/time.ql`) while still rejecting
+/// an `@` declaration in ordinary user code. Matching by content, not path, identifies the
+/// real corelib no matter where it is checked from and never mistakes user code for it.
+pub fn is_corelib_source(source: &str) -> bool {
+    CORELIB_SOURCES.contains(&source)
 }
 
 fn item_is_exported(item: &Item) -> bool {
@@ -148,4 +169,21 @@ pub fn link(program: Program, base_dir: &Path) -> Result<Program, String> {
         imports: Vec::new(),
         items,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn corelib_sources_are_recognized_by_content() {
+        // The trusted origins for `@` declarations: verbatim bundled corelib sources.
+        assert!(is_corelib_source(CORE_TIME));
+        assert!(is_corelib_source(CORE_IO));
+        // Ordinary user code — even code that declares an `@` primitive — is not corelib.
+        assert!(!is_corelib_source(
+            "@bad = () -> Num => 0\n^ = () -> Num => 0\n"
+        ));
+        assert!(!is_corelib_source(""));
+    }
 }

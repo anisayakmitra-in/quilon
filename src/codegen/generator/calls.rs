@@ -36,11 +36,11 @@ impl<'ctx> CodeGenerator<'ctx> {
             return Err("Only direct function calls supported".to_string());
         };
 
-        // A leaf `@` IO primitive (`@sleep`), recognized by the `@` the parser fused into
-        // the name. Handled before every other dispatch — the name is not an
-        // overload/method/constructor.
+        // A leaf `@` IO primitive (`@sleep`, `@readStdin`), recognized by the `@` the parser fused
+        // into the name. Handled before every other dispatch — the name is not an
+        // overload/method/constructor. The `@`-identifier span carries the call's launch site.
         if let Some(primitive) = func_name.strip_prefix('@') {
-            return self.generate_at_primitive(primitive, args);
+            return self.generate_at_primitive(primitive, args, func.span());
         }
 
         // `core.time`'s `now()` — a plain (non-`@`) monotonic clock read, lowered to the
@@ -164,13 +164,18 @@ impl<'ctx> CodeGenerator<'ctx> {
         self.emit_call(function, &arg_values)
     }
 
-    /// Lower a leaf `@` IO primitive call to its runtime intrinsic. The first is
-    /// `@sleep(seconds :: Num) -> $`, an effect-only pause that waits on the current fiber
-    /// and yields `$` (Unit).
+    /// Lower a leaf `@` IO primitive call to its runtime intrinsic. `site` is the span of the
+    /// `@`-identifier (the call's launch site), used to attach an origin to a deferred value.
+    ///
+    /// `@sleep(seconds :: Num) -> $` is an effect-only pause: it waits on the current fiber and
+    /// yields `$`. `@readStdin() -> Text` is the first value-returning primitive: it *launches* a
+    /// background stdin read and returns a DEFERRED `Text` immediately — the fiber only waits
+    /// when the taint pass's force-set says a strict primitive reads the bytes.
     fn generate_at_primitive(
         &mut self,
         primitive: &str,
         args: &[Expr],
+        site: &Span,
     ) -> Result<BasicValueEnum<'ctx>, String> {
         match primitive {
             "sleep" => {
@@ -190,7 +195,50 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // `@sleep` yields `$` (Unit).
                 Ok(self.unit_value().into())
             }
+            "readStdin" => {
+                if !args.is_empty() {
+                    return Err(format!(
+                        "@readStdin expects no arguments, got {}",
+                        args.len()
+                    ));
+                }
+                let (site_ptr, site_len) = self.read_launch_site(site)?;
+                let read = self.get_intrinsic("__read_launch")?;
+                let call = self
+                    .builder
+                    .build_call(read, &[site_ptr.into(), site_len.into()], "read")
+                    .map_err(ctx("Failed to call @readStdin"))?;
+                // The result is a DEFERRED `Text` (`{ promise, -1 }`); the force-set decides
+                // where it is forced. Nothing here dereferences it.
+                Self::call_result_to_basic(call)
+            }
             other => Err(format!("Unknown leaf `@` primitive `@{other}`")),
+        }
+    }
+
+    /// Build the `(i8* data, i64 len)` launch-site argument for `__read_launch` from the
+    /// `@readStdin` call's `site` span: a `path:line:col` string constant when the driver
+    /// recorded one, else a null pointer / zero length (runtime reports `<unknown>` on fault).
+    fn read_launch_site(
+        &mut self,
+        site: &Span,
+    ) -> Result<(PointerValue<'ctx>, inkwell::values::IntValue<'ctx>), String> {
+        match self.defer.read_site(site) {
+            Some(description) => {
+                let global = self
+                    .builder
+                    .build_global_string_ptr(description, "read_site")
+                    .map_err(ctx("Failed to build @readStdin launch site"))?;
+                let len = self
+                    .context
+                    .i64_type()
+                    .const_int(description.len() as u64, false);
+                Ok((global.as_pointer_value(), len))
+            }
+            None => Ok((
+                self.context.ptr_type(AddressSpace::default()).const_null(),
+                self.context.i64_type().const_zero(),
+            )),
         }
     }
 

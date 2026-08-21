@@ -124,6 +124,16 @@ impl<'ctx> CodeGenerator<'ctx> {
             // double __now() — read the monotonic clock, in seconds. Backs `core.time`'s
             // plain (non-`@`) `now()`; only differences between readings are meaningful.
             "__now" => f64t.fn_type(&[], false),
+            // { ptr, i64 } __read_launch(i8* site_data, i64 site_len) — the `@read` leaf IO
+            // primitive: launch a background read of one line from stdin and return the
+            // DEFERRED Text (`{ promise, -1 }`) immediately. `site_data`/`site_len` carry the
+            // call site for fault reporting.
+            "__read_launch" => self
+                .ptr_len_struct_type()
+                .fn_type(&[ptr.into(), i64t.into()], false),
+            // { ptr, i64 } __force_text(i8* promise) — force a deferred Text: park until the
+            // promise is fulfilled, then return its `{ ptr, i64 }` bytes (memoized).
+            "__force_text" => self.ptr_len_struct_type().fn_type(&[ptr.into()], false),
             // i32 __run_fiber_main(ptr entry, i32 argc, ptr argv, ptr envp) — run the
             // generated entry thunk (the C `main` signature) on a scheduler fiber, so any
             // `@` primitive it reaches has a fiber to park on. Returns the exit code.

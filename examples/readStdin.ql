@@ -1,0 +1,19 @@
+~ Deferred values — `@readStdin` (see docs/LANGUAGE.md, "Deferred values").
+~ `@readStdin()` is a value-returning leaf IO primitive: it LAUNCHES a stdin line read in the
+~ background and hands back a DEFERRED Text immediately. The value threads through the `line`
+~ binding untouched (promise pipelining); the fiber only WAITS (forces) at the first strict
+~ operation that reads its bytes — here the `==` inside `assertEq`.
+~
+~ With no piped input (as in the examples gate) stdin is at end-of-input, so `@readStdin()`
+~ yields the empty Text "" immediately — the assertion below holds and the program exits 0.
+~ Pipe a line to see the value flow through:
+~   echo hello | cargo run -- run examples/readStdin.ql   ~ then assert it equals "hello" instead
+
+<< core.io
+<< core.test
+
+^ = () -> Num => <
+  line = @readStdin()         ~ launches the read, returns a deferred Text (no wait here)
+  assertEq(line, "")          ~ the comparison FORCES the value; empty at end-of-input
+  0
+>

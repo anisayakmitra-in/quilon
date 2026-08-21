@@ -4,6 +4,7 @@
 ~                          returns the number of bytes written (Num)
 ~   print(x)             ~ write x to stdout, with a trailing newline (Num/Text/Bool)
 ~   eprint(x)            ~ same, to stderr
+~   @readStdin()         ~ read one line from stdin (Text, without the trailing newline)
 ~   stdout, stderr       ~ the standard file descriptors (Num: 1 and 2)
 ~
 ~ Examples:
@@ -39,3 +40,11 @@
 ~ Write a Text's raw bytes to a file descriptor (no trailing newline).
 ~ Returns the number of bytes written. e.g. `"hi" |> write(stdout)`.
 >> write = (content :: Text, fd :: Num) -> Num => 0
+
+~ Read one line from stdin, returning it as a Text WITHOUT the trailing newline.
+~ `@readStdin` is a leaf IO primitive (the `@` marker): calling it launches the read in the
+~ background and hands back a DEFERRED Text immediately — the fiber only waits (forces) once
+~ a strict operation reads the bytes (a comparison, `print`, a native call, ...). At
+~ end-of-input it yields the empty Text `""`. The body below is an inert placeholder; the
+~ code generator lowers `@readStdin()` to the runtime read/force intrinsics.
+>> @readStdin = () -> Text => ""
