@@ -589,7 +589,11 @@ impl<'ctx> CodeGenerator<'ctx> {
             self.end_di_scope(thunk_scope);
 
             // Back in `main`: run the thunk on a scheduler fiber; its result is the exit code.
+            // Re-seed the builder's debug location to `main`'s scope — emitting the thunk left
+            // it pointing at `__ql_entry`'s subprogram, and the verifier rejects an instruction
+            // whose `!dbg` scope is a different function than the one it lives in.
             self.builder.position_at_end(entry);
+            self.set_debug_loc(&main_span);
             let runner = self.get_intrinsic("__run_fiber_main")?;
             let entry_ptr = entry_fn.as_global_value().as_pointer_value();
             use inkwell::values::AnyValue;

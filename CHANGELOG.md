@@ -19,7 +19,7 @@ All notable changes to Quilon are documented here.
   `Future` type). This lands the runtime surface; the *deferred value* story — a
   value-returning primitive whose result threads lazily and is forced at a strict
   operation, giving automatic overlap — arrives with a later primitive (`@read`). See
-  `examples/deferred_values.ql`.
+  `examples/sleep.ql`.
 - **Uniform `Result` layout — a `Result` of any payload flows through a generic
   `(r :: Result)` parameter/return.** Every `Result` now has a single canonical LLVM
   shape `{ i8 tag, {ptr,i64} slot }`: a `Text` or array payload fills the slot

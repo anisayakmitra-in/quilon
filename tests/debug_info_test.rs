@@ -6,6 +6,9 @@
 //! subprogram for the user's function decl-lined at its source line. Skips gracefully
 //! when the C toolchain or `llvm-dwarfdump` is unavailable (mirrors the native-AOT tests).
 
+use inkwell::context::Context;
+use quilon::codegen::CodeGenerator;
+use quilon::driver::front_end;
 use std::path::Path;
 use std::process::Command;
 
@@ -20,6 +23,48 @@ fn tool_available(tool: &str) -> bool {
         .stderr(std::process::Stdio::null())
         .status()
         .is_ok()
+}
+
+/// A program that uses an `@` primitive runs its entry on a scheduler fiber: `main` calls
+/// `__run_fiber_main` on a separate `__ql_entry` thunk. Under `--debug` that call must carry
+/// a `!dbg` scope in `main`'s own subprogram, not `__ql_entry`'s — LLVM's verifier rejects an
+/// instruction whose debug scope is a different function than the one it lives in. This drives
+/// the codegen path (which verifies the module) with debug info on directly, so it catches the
+/// verifier failure without needing a linker or `llvm-dwarfdump` — the gap the linker-gated
+/// tests below left open.
+#[test]
+fn debug_codegen_verifies_module_for_a_deferral_program() {
+    let src = "\
+<< core.time
+
+^ = () -> Num => <
+  @sleep(0)
+  0
+>
+";
+    let dir = std::env::temp_dir().join(format!("quilon_dbgdefer_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    let ql = dir.join("defer.ql");
+    std::fs::write(&ql, src).expect("write temp source");
+
+    let checked = front_end(&ql).unwrap_or_else(|e| panic!("front end failed: {e}"));
+    assert!(
+        checked.defer.uses_deferral,
+        "the `@sleep` program should use deferral (be the wrapped-entry codegen path)"
+    );
+
+    let context = Context::create();
+    let mut generator = CodeGenerator::new(&context, "main");
+    generator.set_type_table(checked.types);
+    generator.set_defer_info(checked.defer);
+    generator.enable_debug(&ql, &checked.source, checked.imported_items);
+
+    // `generate` runs `module.verify()` internally, so an Err here IS the verifier failure.
+    generator
+        .generate(&checked.program)
+        .unwrap_or_else(|e| panic!("debug codegen of a deferral program failed to verify: {e}"));
+
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
