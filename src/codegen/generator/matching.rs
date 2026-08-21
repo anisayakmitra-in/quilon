@@ -254,16 +254,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 .insert(arg_name.clone(), (alloca, payload.get_type()));
                             if let Some(ty) = payload_ty {
                                 self.var_types.insert(arg_name.clone(), ty.clone());
-                                // A NAMED-record payload binds by pointer (the record ABI);
-                                // track its field names and type so `p.field` / method calls
-                                // on the binding resolve, exactly as a record-typed local or
-                                // parameter does.
-                                if let Type::Named { name, .. } = ty
-                                    && let Some(fields) = self.named_type_fields.get(name).cloned()
-                                {
-                                    self.record_types.insert(arg_name.clone(), fields);
-                                    self.var_named_types.insert(arg_name.clone(), name.clone());
-                                }
+                                // A named-record payload binds by pointer (the record ABI);
+                                // track it so field reads / method calls on the binding resolve.
+                                self.track_named_record_binding(arg_name, ty);
                             }
                         }
                     }

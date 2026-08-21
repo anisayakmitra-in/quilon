@@ -170,7 +170,14 @@ impl TypeChecker {
                         let resolved = self.resolve_type(field);
                         let acceptable = match &resolved {
                             Type::Num | Type::Text | Type::Bool | Type::Unit => true,
-                            Type::Named { fields, .. } => !fields.is_empty(),
+                            // A named payload must resolve to a declared RECORD.
+                            // `resolve_type` maps a sum name to `Type::Sum` (so nested sums
+                            // fall through to the reject arm below) and leaves an unknown
+                            // name as a field-less `Named`; the env lookup distinguishes a
+                            // real record — of any field/method count — from that unknown.
+                            Type::Named { name, .. } => {
+                                matches!(self.env.get_type(name), Some(Type::Named { .. }))
+                            }
                             _ => false,
                         };
                         if !acceptable {
@@ -244,7 +251,8 @@ impl TypeChecker {
 
                 // Bind each nullary variant as a value of the sum type, so a bare
                 // `Red` resolves as an expression. (Variants with payloads are
-                // resolved as constructor calls in `check_call`.)
+                // resolved as constructor calls in `check_call`.) Nullary-ness is name
+                // and arity only, identical in the parsed and resolved variant lists.
                 for variant in variants {
                     if variant.fields.is_empty() {
                         self.env.define(
