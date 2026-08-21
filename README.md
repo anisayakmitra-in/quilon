@@ -27,6 +27,19 @@ greet = name :: Text => "Hello, " + name
 
 See **[LANGUAGE.md](./docs/LANGUAGE.md)** for the full reference (types, modules, pattern matching, I/O, the symbol table, and the feature matrix).
 
+## Principles
+
+The values that guide **this** language:
+
+- **Should make me laugh** — delight is a feature; playful ideas get real priority.
+- **Colorless concurrency** — implicit futures on cooperative fibers; concurrency follows data dependence, not program order. No `async`/`await`.
+- **Fail loud, never silent** — invalid operations error (a compile error when we can see it, else a crash); never a silent no-op, clamp, or magic sentinel.
+- **Errors as values** — Result-first; no `-1` or null sentinels.
+- **Eat the rich** — objects are as rich as possible, but lazy: parse and compute only what you touch.
+- **No magic, thin primitives** — the stdlib is written in `.ql` over a small set of true primitives.
+- **Overloading, not generics** — ad-hoc overloading is the only polymorphism.
+- **Immutable by default** — `=` binds immutably; `:=` opts into mutation.
+
 ## Prerequisites
 
 Install these **before** building or running Quilon:
