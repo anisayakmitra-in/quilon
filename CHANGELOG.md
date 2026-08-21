@@ -6,8 +6,8 @@ All notable changes to Quilon are documented here.
 
 ### Added
 
-- **Deferred values — the `@read` leaf IO primitive ([#120](https://github.com/assapir/quilon/issues/120)).**
-  The value-returning half of the colorless implicit-futures model. `@read()` (in
+- **Deferred values — the `@readStdin` leaf IO primitive ([#120](https://github.com/assapir/quilon/issues/120)).**
+  The value-returning half of the colorless implicit-futures model. `@readStdin()` (in
   `core.io`) reads one line from stdin and returns a **deferred** `Text`: calling it
   *launches* the read on a background fiber and hands back the value immediately — the
   caller does not wait. The value threads lazily through bindings, records, and calls
@@ -21,13 +21,14 @@ All notable changes to Quilon are documented here.
   **only tainted values carry the promise representation and pure code is byte-identical**
   (zero overhead). The **type checker is unchanged**: a deferred `Text` still types as
   `Text` (no `Task`/`Future` type), so overload resolution is untouched — forcing keys off
-  the operation, never the type. The promise records its `@read` launch site so a read
+  the operation, never the type. The promise records its `@readStdin` launch site so a read
   fault reports where the IO was called; a scope runs its launched reads to completion
   before it exits (effects never vanish). Also fixes checking a corelib file directly
   (`quilon check corelib/time.ql`): the front-end now trusts a bundled corelib source to
-  declare `@` primitives while still rejecting them in user code. See
-  `examples/read.ql` (run it with piped input); cross-source *overlap* is
-  demonstrated later with a networked primitive.
+  declare `@` primitives while still rejecting them in user code. On end-of-input
+  `@readStdin()` returns the empty `Text` `""`. See `examples/read.ql` (pipe it a line to
+  watch a real value flow); cross-source *overlap* is demonstrated later with a networked
+  primitive.
 - **Concurrency runtime — the `@sleep` leaf IO primitive ([#120](https://github.com/assapir/quilon/issues/120)).**
   The first Quilon-visible surface of the colorless implicit-futures model: `@sleep`
   (in the new `core.time` module), an effect-only pause. `@sleep(secs)` takes seconds
@@ -40,7 +41,7 @@ All notable changes to Quilon are documented here.
   one, and the type system is untouched (`@sleep` is a plain `Num -> $`, no `Task`/
   `Future` type). This lands the runtime surface; the *deferred value* story — a
   value-returning primitive whose result threads lazily and is forced at a strict
-  operation, giving automatic overlap — arrives with a later primitive (`@read`). See
+  operation, giving automatic overlap — arrives with a later primitive (`@readStdin`). See
   `examples/sleep.ql`.
 - **Uniform `Result` layout — a `Result` of any payload flows through a generic
   `(r :: Result)` parameter/return.** Every `Result` now has a single canonical LLVM

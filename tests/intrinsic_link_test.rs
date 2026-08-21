@@ -47,9 +47,9 @@ const EVERY_INTRINSIC: &str = r#"
   @sleep(0)
   assert(now() >= 0)
 
-  ~ __read_launch (the @read leaf primitive) and __force_text (the `.length` reads the
-  ~ deferred Text's bytes, forcing it). Run with empty stdin here, so @read yields "".
-  line = @read()
+  ~ __read_launch (the @readStdin leaf primitive) and __force_text (the `.length` reads the
+  ~ deferred Text's bytes, forcing it). Run with empty stdin here, so @readStdin yields "".
+  line = @readStdin()
   assert(line.length >= 0)
 
   ~ __argv_to_text_array / __envp_to_pairs come from these parameters existing.

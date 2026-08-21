@@ -1,8 +1,8 @@
-//! End-to-end proof of the value-returning `@read` primitive and force-on-use.
+//! End-to-end proof of the value-returning `@readStdin` primitive and force-on-use.
 //!
-//! `@read()` launches a background stdin line read and returns a DEFERRED `Text`; the deferred
+//! `@readStdin()` launches a background stdin line read and returns a DEFERRED `Text`; the deferred
 //! value flows through a binding and is FORCED where a strict primitive reads its bytes (a
-//! comparison inside `assertEq`, or a `print`). The standard examples gate can't drive `@read`
+//! comparison inside `assertEq`, or a `print`). The standard examples gate can't drive `@readStdin`
 //! (it pipes no input), so these tests spawn the compiler as a subprocess with a controlled
 //! stdin — proving the read value flowed through and forced correctly on both the in-process
 //! JIT (`quilon run`) and, when a linker is present, a native AOT binary (`quilon build`).
@@ -14,7 +14,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-/// A program that binds `@read()` to `line` and asserts it equals `"hello"`. The deferred
+/// A program that binds `@readStdin()` to `line` and asserts it equals `"hello"`. The deferred
 /// value is forced at the `assertEq` comparison: matching input exits 0, anything else trips
 /// the assertion (exit 101) — which is what proves the real read value reached the compare.
 const ASSERT_READ: &str = r#"
@@ -22,19 +22,35 @@ const ASSERT_READ: &str = r#"
 << core.test
 
 ^ = () -> Num => <
-  line = @read()
+  line = @readStdin()
   assertEq(line, "hello")
   0
 >
 "#;
 
-/// A program that forces `@read()` directly at a `print` (a strict native output arg) and
+/// A program that forces `@readStdin()` directly at a `print` (a strict native output arg) and
 /// echoes the line back — proving the deferred value reaches `print` and is forced there.
 const ECHO_READ: &str = r#"
 << core.io
 
 ^ = () -> Num => <
-  print(@read())
+  print(@readStdin())
+  0
+>
+"#;
+
+/// Two `@readStdin()` launches in one scope. They overlap eagerly but stdin is a single serial
+/// stream, so the gate makes them read CONSECUTIVE lines in launch order — `first` then
+/// `second`. Proves concurrent reads neither crash (racing fd 0) nor drop/interleave bytes.
+const TWO_READS: &str = r#"
+<< core.io
+<< core.test
+
+^ = () -> Num => <
+  first = @readStdin()
+  second = @readStdin()
+  assertEq(first, "hello")
+  assertEq(second, "world")
   0
 >
 "#;
@@ -105,7 +121,7 @@ fn jit_read_forces_at_a_strict_comparison() {
     assert_eq!(
         code,
         Some(0),
-        "@read value should force to \"hello\" and pass"
+        "@readStdin value should force to \"hello\" and pass"
     );
 
     // Different input: the SAME forced value must reach the compare and fail the assertion —
@@ -114,7 +130,7 @@ fn jit_read_forces_at_a_strict_comparison() {
     assert_eq!(
         code,
         Some(101),
-        "a non-matching @read value must trip the assertion"
+        "a non-matching @readStdin value must trip the assertion"
     );
 
     let _ = std::fs::remove_file(&file);
@@ -127,7 +143,21 @@ fn jit_read_forces_at_a_print() {
     assert_eq!(code, Some(0));
     assert_eq!(
         stdout, "transform me\n",
-        "print should force the deferred @read value and echo the line"
+        "print should force the deferred @readStdin value and echo the line"
+    );
+    let _ = std::fs::remove_file(&file);
+}
+
+#[test]
+fn jit_two_reads_serialize_into_consecutive_lines() {
+    // Two eager @readStdin launches must read consecutive lines in order (the stdin gate
+    // serializes them) — not crash on a shared fd or drop/interleave bytes.
+    let file = temp_ql("two", TWO_READS);
+    let (code, _) = jit_run(&file, b"hello\nworld\n");
+    assert_eq!(
+        code,
+        Some(0),
+        "two @readStdin launches should read \"hello\" then \"world\""
     );
     let _ = std::fs::remove_file(&file);
 }
@@ -135,7 +165,7 @@ fn jit_read_forces_at_a_print() {
 #[test]
 fn aot_read_forces_at_a_strict_comparison() {
     let Some(linker) = available_linker() else {
-        eprintln!("skipping AOT @read gate: need a linker (`clang` or `gcc`) on PATH");
+        eprintln!("skipping AOT @readStdin gate: need a linker (`clang` or `gcc`) on PATH");
         return;
     };
 
@@ -157,12 +187,16 @@ fn aot_read_forces_at_a_strict_comparison() {
     );
 
     let (ok_code, _) = run_with_stdin(Command::new(&binary), b"hello\n");
-    assert_eq!(ok_code, Some(0), "native AOT: matching @read should pass");
+    assert_eq!(
+        ok_code,
+        Some(0),
+        "native AOT: matching @readStdin should pass"
+    );
     let (bad_code, _) = run_with_stdin(Command::new(&binary), b"goodbye\n");
     assert_eq!(
         bad_code,
         Some(101),
-        "native AOT: non-matching @read must trip the assertion"
+        "native AOT: non-matching @readStdin must trip the assertion"
     );
 
     let _ = std::fs::remove_file(&source);

@@ -165,7 +165,7 @@ impl Taint {
     /// value is delivered to the parent still deferred (i.e. it reached here through lazy
     /// carriers only). The parent decides whether to force it, via [`Self::strict`].
     fn visit(&mut self, expr: &Expr, env: &Scope) -> bool {
-        let deferred = match expr {
+        match expr {
             Expr::Number { .. } | Expr::String { .. } | Expr::Bool { .. } | Expr::Unit { .. } => {
                 false
             }
@@ -262,8 +262,7 @@ impl Taint {
                 any
             }
             Expr::Block { stmts, .. } => self.visit_block(stmts, env),
-        };
-        deferred
+        }
     }
 
     /// A block introduces a scope. Bindings carry their value's deferredness (a `=` is lazy);
