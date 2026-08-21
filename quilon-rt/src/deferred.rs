@@ -184,50 +184,62 @@ fn read_stdin_line() -> io::Result<Vec<u8>> {
 /// trailing `\r` is dropped too). At end-of-input with nothing buffered, returns an empty
 /// `Vec` — the documented end-of-input value (`@read` yields an empty `Text` there). Bytes
 /// past the newline stay in `buffer` for the next call.
+///
+/// The reactor registration is LAZY: it reads first and only registers `fd` (and parks) on the
+/// first `WouldBlock`. So a source that is ready right away — piped data already buffered, or a
+/// non-pollable fd like a redirected file or `/dev/null` that returns data/EOF at once — never
+/// touches `epoll`, which rejects such fds. Only a genuinely-not-ready pollable source (an
+/// empty pipe/tty) is registered and parked on. Registering after a `WouldBlock` loses no
+/// wakeup: adding an already-ready fd to the poll reports it immediately.
 fn read_line_from(fd: i32, buffer: &mut Vec<u8>) -> io::Result<Vec<u8>> {
     if let Some(line) = take_line(buffer) {
         return Ok(line);
     }
     set_nonblocking(fd);
     let mut source = SourceFd(&fd);
-    let token = register_readiness(&mut source, Interest::READABLE)?;
-    let result = read_until_line(fd, buffer, &mut source, token);
-    deregister_readiness(&mut source);
-    result
-}
-
-/// Loop reading from `fd` into `buffer`, parking on `WouldBlock`, until a full line is
-/// buffered or the stream ends. `source`/`token` are already registered readable.
-fn read_until_line(
-    fd: i32,
-    buffer: &mut Vec<u8>,
-    source: &mut SourceFd,
-    token: Token,
-) -> io::Result<Vec<u8>> {
+    let mut token: Option<Token> = None;
     let mut chunk = [0u8; 1024];
-    loop {
-        if let Some(line) = take_line(buffer) {
-            return Ok(line);
-        }
+    let result = loop {
         // SAFETY: `read(2)` into a valid, owned buffer of `chunk.len()` bytes.
         let count = unsafe { libc::read(fd, chunk.as_mut_ptr() as *mut c_void, chunk.len()) };
         if count > 0 {
             buffer.extend_from_slice(&chunk[..count as usize]);
+            if let Some(line) = take_line(buffer) {
+                break Ok(line);
+            }
         } else if count == 0 {
             // EOF: hand back whatever is buffered (an unterminated final line), or empty.
-            return Ok(std::mem::take(buffer));
+            break Ok(std::mem::take(buffer));
         } else {
             let error = io::Error::last_os_error();
             match error.kind() {
                 io::ErrorKind::WouldBlock => {
-                    reregister_readiness(source, token, Interest::READABLE)?;
-                    park_on_readiness(token);
+                    let active = match token {
+                        Some(active) => {
+                            match reregister_readiness(&mut source, active, Interest::READABLE) {
+                                Ok(()) => active,
+                                Err(error) => break Err(error),
+                            }
+                        }
+                        None => match register_readiness(&mut source, Interest::READABLE) {
+                            Ok(active) => {
+                                token = Some(active);
+                                active
+                            }
+                            Err(error) => break Err(error),
+                        },
+                    };
+                    park_on_readiness(active);
                 }
                 io::ErrorKind::Interrupted => {}
-                _ => return Err(error),
+                _ => break Err(error),
             }
         }
+    };
+    if token.is_some() {
+        deregister_readiness(&mut source);
     }
+    result
 }
 
 /// If `buffer` holds a complete line (up to and including a `\n`), remove and return it

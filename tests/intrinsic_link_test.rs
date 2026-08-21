@@ -47,6 +47,11 @@ const EVERY_INTRINSIC: &str = r#"
   @sleep(0)
   assert(now() >= 0)
 
+  ~ __read_launch (the @read leaf primitive) and __force_text (the `.length` reads the
+  ~ deferred Text's bytes, forcing it). Run with empty stdin here, so @read yields "".
+  line = @read()
+  assert(line.length >= 0)
+
   ~ __argv_to_text_array / __envp_to_pairs come from these parameters existing.
   assert(args.size >= 1)
   assert(env.size >= 0)
@@ -105,6 +110,7 @@ fn build_and_run(quilon: &Path, linker: &str, dir: &Path) -> i32 {
     );
 
     let run = Command::new(&out)
+        .stdin(std::process::Stdio::null())
         .output()
         .expect("running the built program");
     assert!(
@@ -155,6 +161,7 @@ fn every_intrinsic_resolves_under_the_jit() {
     let run = Command::new(&quilon)
         .arg("run")
         .arg(&source)
+        .stdin(std::process::Stdio::null())
         .output()
         .expect("running quilon run");
     assert!(
