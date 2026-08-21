@@ -6,6 +6,28 @@ All notable changes to Quilon are documented here.
 
 ### Added
 
+- **Deferred values — the `@read` leaf IO primitive ([#120](https://github.com/assapir/quilon/issues/120)).**
+  The value-returning half of the colorless implicit-futures model. `@read()` (in
+  `core.io`) reads one line from stdin and returns a **deferred** `Text`: calling it
+  *launches* the read on a background fiber and hands back the value immediately — the
+  caller does not wait. The value threads lazily through bindings, records, and calls
+  (promise pipelining) and is **forced on use** — the fiber parks until the bytes are
+  ready — only where a strict primitive reads them (a comparison, `print`/`write`, a
+  native call, the match scrutinee, an `@`-primitive argument, the `^` exit). At
+  end-of-input it yields the empty `Text` `""`. A new pre-codegen **deferred-taint pass**
+  colors which expressions can be deferred and marks the exact force-frontier sites;
+  codegen emits a memoized park-or-read `force` there and a hybrid representation (a
+  deferred `Text` is `{ promise, -1 }`, a real byte length is never negative) — so
+  **only tainted values carry the promise representation and pure code is byte-identical**
+  (zero overhead). The **type checker is unchanged**: a deferred `Text` still types as
+  `Text` (no `Task`/`Future` type), so overload resolution is untouched — forcing keys off
+  the operation, never the type. The promise records its `@read` launch site so a read
+  fault reports where the IO was called; a scope runs its launched reads to completion
+  before it exits (effects never vanish). Also fixes checking a corelib file directly
+  (`quilon check corelib/time.ql`): the front-end now trusts a bundled corelib source to
+  declare `@` primitives while still rejecting them in user code. See
+  `examples/deferred_read.ql` (run it with piped input); cross-source *overlap* is
+  demonstrated later with a networked primitive.
 - **Concurrency runtime — the `@sleep` leaf IO primitive ([#120](https://github.com/assapir/quilon/issues/120)).**
   The first Quilon-visible surface of the colorless implicit-futures model: `@sleep`
   (in the new `core.time` module), an effect-only pause. `@sleep(secs)` takes seconds
