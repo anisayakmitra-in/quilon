@@ -74,6 +74,10 @@ c = greeting.length          ~ grapheme count   → 7
 - `.length` = grapheme-cluster count (user-perceived characters, full UTF-8).
 - `+` = concatenation.
 
+Escapes inside a literal: `\n`, `\r`, `\t`, `\"`, `\\`, `\<` (a literal `<`, which would
+otherwise open a block), and `\e` — the ESC byte that leads an ANSI terminal sequence
+(`"\e[1m" + text + "\e[0m"`). Any other escape is a lex error.
+
 #### Text methods
 
 `Text` carries a set of **built-in, compiler-provided methods**, called with method
@@ -92,6 +96,7 @@ intrinsic. Where an index or length is user-visible they are **grapheme-based** 
 | `indexOf(sub :: Text)` | `Ok(Num)` / `NotOk` | grapheme index of the first occurrence (`Ok`), or `NotOk` if absent — **no `-1` sentinel** |
 | `slice(start :: Num, end :: Num)` | `Text` | substring over grapheme indices `[start, end)`; out-of-range indices **clamp** to bounds (never an error), and `end ≤ start` yields `""` |
 | `toUpper()` / `toLower()` | `Text` | Unicode-aware case mapping |
+| `repeat(count :: Num)` | `Text` | `count` copies back to back (`"^".repeat(3)` → `"^^^"`); `0` yields `""` |
 
 ```quilon
 "a,b,c".split(",")                       ~ ["a", "b", "c"]
@@ -122,7 +127,8 @@ the number of occurrences actually present, are rejected: at **compile time** wh
 values are literals (e.g. `"a".replace("a", "b", 0)` or `"aa".replace("a", "b", 5)`), and
 otherwise at **run time** — the program prints a diagnostic to stderr and exits `101`. Use
 `replaceAll` for "replace everything"; `replace(count)` is a precise "replace exactly this
-many" contract.
+many" contract. `repeat` holds the same line: a negative or fractional `count` is a compile
+error when literal and a run-time abort otherwise — never a silent clamp to `0`.
 
 (See `examples/text.ql` and `examples/text_methods.ql`.)
 
@@ -421,6 +427,9 @@ reassignment but in-place mutation of records:
 - A `:=`-bound instance is **mutable**: both forms of in-place mutation are allowed —
   a direct field write `obj.field := value` (mutates the existing record, no
   re-allocation), and any **setter** method.
+- One exception, by type rather than by binding: a [`Site`](#call-site-locations--site) is
+  read-only — a location is a value, not a variable — so writing one of its fields is an
+  error even through a `:=` binding.
 
 ```quilon
 Counter = {
@@ -821,24 +830,109 @@ There is no `println` — `print` owns the newline; `write` is the raw form. (Se
 
 ---
 
+## Call-site locations — `Site`
+
+A function whose **last** parameter is a `Site` receives the location of the call — and a
+call that leaves that argument off has it **filled in by the compiler**:
+
+```quilon
+whereAmI = (site :: Site) -> Text => "`site.file`:`site.line`:`site.column`"
+
+^ = () -> $ => <
+  print(whereAmI())        ~ prints e.g. demo.ql:4:9 — the location of THIS call
+>
+```
+
+`Site` is a built-in record type, nameable in any signature with **no import**:
+
+| Field | Type | Is |
+|---|---|---|
+| `file` | `Text` | the call's file, as the compiler resolved it (the path you named on the command line, for your own file) |
+| `line` | `Num` | 1-based line of the call |
+| `column` | `Num` | 1-based column, in characters |
+| `excerpt` | `Text` | the text of that line, without its newline |
+| `width` | `Num` | how many characters of the line the call spans — a caret run under the call |
+
+`line`, `column`, and `width` are always at least 1. `Site` is a built-in type name, so a
+program cannot declare its own `Site` (as with `Result`).
+
+**A `Site` is read-only.** A location is a value, not a variable: writing one of its fields
+(`site.line := 9`) is a compile error however the value was reached — records are handles
+that alias, so a write through a `:=` rebinding would be a write to the same thing. That is
+what lets the compiler lower each call site to one shared constant.
+
+A program *may* build a `Site` of its own (`Site { file = "…", line = 1, column = 1,
+excerpt = "…", width = 1 }`) and pass it on — a hand-made one is an ordinary record value,
+read-only like any other, and `failAt` will report wherever it says. What a program cannot
+do is *declare* the type: `Site` is a built-in name (as with `Result`).
+
+**Passing one explicitly forwards it.** That is the whole propagation rule, and it is what
+makes a chain of wrappers report the *user's* call rather than the innermost hop
+(Rust's `#[track_caller]`, expressed as an ordinary argument):
+
+```quilon
+inner = (site :: Site) -> Num => site.line
+outer = (site :: Site) -> Num => inner(site)   ~ forwards: reports where `outer` was called
+plain = (site :: Site) -> Num => inner()       ~ does not: reports THIS line
+```
+
+A `Site` is an ordinary record value otherwise — read its fields, hand it on, store it.
+Only a **top-level function's last** parameter can be filled in, so a `Site` anywhere else
+is a compile error rather than an argument nothing supplies: not before another parameter,
+not on a lambda or a nested declaration (called through a value, not by name), and not on a
+record method (dispatched by receiver type). The arity a caller sees never counts it —
+`whereAmI()` above takes no arguments as far as the call site is concerned.
+
+This is the mechanism [`core.test`'s assertions](#assertions--core-test) report your call
+site with; nothing about it is specific to them. **It costs nothing while the program
+runs.** Every field is a compile-time constant, so each call site is emitted as a read-only
+constant and the call passes its address — no allocation, no stores, no unwinder, and no
+debug info to keep; JIT (`quilon run`) and native builds report identically. A passing
+assertion costs its comparison and a pointer argument, and nothing else: the message and the
+report around it are built only on the failing branch. Assert as often as you like, in the
+hottest loop you have. (What a site does cost is image space — the record, plus two
+relocations for its `Text` fields in a position-independent executable.) (See
+`examples/call_site.ql`.)
+
+---
+
 ## Assertions — `<< core.test`
 
 In-language assertions for **self-verifying programs and examples**. A holding
-assertion does nothing; a **failing** one prints a message to **stderr** and exits
-the process with code **101** (the Rust-panic convention, distinct from the 0 a
-passing program exits with), so a broken program fails loudly in CI. Every example
-in `examples/` is written this way: it asserts each result it demonstrates and exits
-0 on success — the examples gate runs them all under the JIT and native AOT.
+assertion does nothing; a **failing** one reports to **stderr** and exits the process with
+code **101** (the Rust-panic convention, distinct from the 0 a passing program exits with),
+so a broken program fails loudly in CI. Every example in `examples/` is written this way: it
+asserts each result it demonstrates and exits 0 on success — the examples gate runs them all
+under the JIT and native AOT.
+
+A failure says **where** it failed, in the same shape as a compiler
+[error](#error-messages) — position, message, source line, caret run:
+
+```text
+demo.ql:12:3: assertion failed: expected 42, got 41
+   |
+12 |   assertEq(answer(), 42)
+   |   ^^^^^^^^^^^^^^^^^^^^^^
+```
+
+The location is **your** call site, never an internal hop: `assertEq` fails several calls
+deep inside `core.test`, and still points at the line where your program called `assertEq`
+— including when that line is inside a helper function rather than `^`. Each assertion
+takes a trailing [`site :: Site`](#call-site-locations--site) the compiler fills in and the
+wrappers forward. The report is **colored** when stderr is a terminal, and plain when it is
+redirected or `NO_COLOR` / `TERM=dumb` is set — decided per run, so a CI log and a piped
+build stay clean.
 
 | Function | Effect |
 |----------|--------|
-| `assert(cond :: Bool) -> $` | The primitive. If `cond` is false, print `assertion failed` to stderr and exit `101`; otherwise do nothing. Returns `$` (Unit). |
-| `assert(cond :: Bool, opts :: AssertOpts) -> $` | Same, but on failure print `opts.message` instead of the default. An [overload](#overloading) of `assert`. |
+| `assert(cond :: Bool) -> $` | The primitive. If `cond` is false, report `assertion failed` at the call site and exit `101`; otherwise do nothing. Returns `$` (Unit). |
+| `assert(cond :: Bool, opts :: AssertOpts) -> $` | Same, but reports `opts.message` instead of the default. An [overload](#overloading) of `assert`. |
 | `AssertOpts` | Options record for `assert`: `{ message :: Text }`. The extensible knob (more options may be added later). Records are nominal, so construct it by name: `AssertOpts { message = "..." }`. |
-| `assertEq(actual, expected) -> $` | Assert `actual == expected`; on failure prints **expected** then **actual** to stderr before failing. An [overload set](#overloading) over `Num`/`Text`/`Bool`. |
-| `assertNotEq(a, b) -> $` | Assert `a != b`; prints the (equal) value on failure. Overloaded over `Num`/`Text`/`Bool`. |
+| `assertEq(actual, expected) -> $` | Assert `actual == expected`; the report names both (`expected 42, got 41`; `Text` values quoted, so a stray space is visible). An [overload set](#overloading) over `Num`/`Text`/`Bool`. |
+| `assertNotEq(a, b) -> $` | Assert `a != b`; the report names the (equal) value. Overloaded over `Num`/`Text`/`Bool`. |
 | `assertOk(r :: Result) -> $` | Assert `r` is `Ok`; fail on `NotOk`. |
 | `assertNotOk(r :: Result) -> $` | Assert `r` is `NotOk`; fail on `Ok`. |
+| `failAt(message :: Text) -> $` | Fail outright: report `message` at the caller's location and exit `101`. The primitive the assertions above are built from, and what an assertion of your own calls — take a trailing `site :: Site` and forward it, and yours reports ITS caller too. |
 
 ```quilon
 << core.test
@@ -852,12 +946,15 @@ in `examples/` is written this way: it asserts each result it demonstrates and e
 >
 ```
 
-`assertEq`/`assertNotEq` render values with `eprint`, so their failure messages show the
-rendered `expected`/`actual` — for `Num`/`Text`/`Bool` and, via the [`` ` `` render
-operator](#string-interpolation-and-the-render-operator), for records, sum types, and
-arrays too. The whole module is
-pure Quilon (`corelib/test.ql`) built on `assert`, `==`/`!=`, and pattern-matching —
-its only native primitive is a process-exit intrinsic. (See `examples/assert_demo.ql`.)
+`assertEq`/`assertNotEq` build their message with
+[interpolation](#string-interpolation-and-the-render-operator), so the values appear
+rendered — `Num`/`Text`/`Bool` directly, and records, sum types, and arrays through their
+`` ` `` render operator. The whole module is pure Quilon (`corelib/test.ql`): the report is
+composed and printed in-language from the `Site` fields, built on `assert`, `==`/`!=`,
+pattern matching, and `Text.repeat` for the caret run — its only native primitives are the
+internal process-exit and terminal-detection intrinsics. (See
+`examples/assert_demo.ql`, and `examples/assert_location.ql`, which fails on purpose to
+show the report.)
 
 ---
 
@@ -1119,6 +1216,10 @@ A span covering multiple lines underlines its first line. Failures with no
 source location (a missing file, an unresolved import) print a plain one-line
 message instead. Any compile error exits with status 1.
 
+A **run-time** failure that knows its call site — a failing
+[`core.test` assertion](#assertions--core-test) — reports in the same shape, from the same
+position resolver, so a program's own failures read like the compiler's.
+
 To stay robust on hostile or machine-generated input, the parser also caps how
 deeply expressions may nest: nesting more than **128 levels** of parentheses,
 array/record literals, block statements, `[]T` element types, constructor
@@ -1139,7 +1240,7 @@ pathological input.
 | `Num`, arithmetic, comparison, logical, ternary | ✅ |
 | `Text` built-in: literals, `+`, `.size`, `.length` | ✅ |
 | `Text` comparison: `==`/`!=` (equality), `<`/`<=`/`>`/`>=` (lexicographic) | ✅ |
-| `Text` methods: `split`/`trim`/`trimStart`/`trimEnd`/`replaceAll`/`replace`/`contains`/`indexOf`/`slice`/`toUpper`/`toLower` (chainable; grapheme-based) | ✅ |
+| `Text` methods: `split`/`trim`/`trimStart`/`trimEnd`/`replaceAll`/`replace`/`repeat`/`contains`/`indexOf`/`slice`/`toUpper`/`toLower` (chainable; grapheme-based) | ✅ |
 | Ad-hoc overloading: same-named typed defs, exact-type dispatch | ✅ |
 | Operator overloading (`+`, comparisons, … on user types); built-ins as overloads | ✅ |
 | `Bool` | ✅ |
@@ -1165,7 +1266,9 @@ pathological input.
 | Modules: `<< core.io`, `<< core.test`, `<< core.cli`, `<< core.time`, file-path imports, `>>` exports | ✅ |
 | I/O: `print` / `eprint` / `write` | ✅ |
 | I/O: `@readStdin` — deferred stdin line read, forced on use | ✅ |
-| Assertions: `<< core.test` (`assert` (+ `AssertOpts` message) / `assertEq` / `assertNotEq` / `assertOk` / `assertNotOk`; fail → exit 101) | ✅ |
+| Assertions: `<< core.test` (`assert` (+ `AssertOpts` message) / `assertEq` / `assertNotEq` / `assertOk` / `assertNotOk` / `failAt`; fail → exit 101) | ✅ |
+| [Call-site locations](#call-site-locations--site): a trailing `site :: Site` parameter filled in by the compiler and forwarded by passing it on (track-caller) — a failing assertion reports YOUR call's `file:line:column` with a caret, identically under JIT and native | ✅ |
+| Terminal-aware color: a failing assertion's report is colored on a terminal and plain when redirected or under `NO_COLOR`/`TERM=dumb`; the `\e` (ESC) string escape writes an ANSI sequence from `.ql` | ✅ |
 | CLI helpers: `<< core.cli` (`getEnv` / `hasFlag` / `getOpt`; both `--name value` and `--name=value`; flag names with or without `--`) | ✅ |
 | Conservative GC (Boehm) | ✅ |
 | `Text` (and nested arrays) in records/arrays, or as a sum-type payload (`Ok(text)`) | ✅ |

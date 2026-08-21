@@ -89,7 +89,7 @@ impl TypeChecker {
                 for stmt in stmts.iter() {
                     match stmt {
                         crate::ast::Statement::Item(item) => {
-                            self.check_item(item)?;
+                            self.check_item(item, Nesting::Nested)?;
                         }
                         crate::ast::Statement::Expr(expr) => {
                             result_type = self.infer_expr(expr)?;
@@ -193,6 +193,20 @@ impl TypeChecker {
                 // surfaces its own diagnostic, rather than being misreported as an
                 // immutable write (an unknown name reads as "not mutable").
                 let field_type = self.infer_expr(target)?;
+
+                // A `Site` is a compile-time constant: codegen lowers each call site to a
+                // read-only global, so there is no storage to write to. Records are handles
+                // that alias, so this has to be refused however the value was reached —
+                // `s := site` then `s.line := 1` names the same constant.
+                if let Expr::FieldAccess { expr, field, .. } = target.as_ref()
+                    && let Some(base_type) = self.type_table.get(expr.span())
+                    && crate::ast::is_site_type(base_type)
+                {
+                    return Err(TypeError::SiteIsImmutable {
+                        field: field.clone(),
+                        span: span.clone(),
+                    });
+                }
 
                 if let Some(name) = self.immutable_mutation_root(target) {
                     return Err(TypeError::ImmutableFieldWrite {

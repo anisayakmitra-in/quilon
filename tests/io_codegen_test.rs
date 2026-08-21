@@ -106,3 +106,15 @@ fn main_wrapper_initializes_gc() {
     // The GC init must be declared as an external (no body) function.
     assert!(ir.contains("declare") && ir.contains("@__gc_init"));
 }
+
+#[test]
+fn color_enabled_lowers_to_the_color_intrinsic() {
+    // `__color_enabled(fd)` is an INTERNAL compiler-lowered primitive (like `__exit`, and
+    // exported by no module): it becomes a `__color_enabled` call, so `core.test` does not
+    // have to guess at terminal detection in `.ql`.
+    let ir = gen_ir("^ = () -> Num => __color_enabled(2) ? 1 : 0");
+    assert!(
+        ir.contains("declare i64 @__color_enabled(i64)"),
+        "__color_enabled must lower to the runtime intrinsic, got:\n{ir}"
+    );
+}

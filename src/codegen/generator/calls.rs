@@ -24,10 +24,13 @@ impl<'ctx> CodeGenerator<'ctx> {
         Self::call_result_to_basic(call_site)
     }
 
+    /// Lower a call. `span` is the CALL's own span — the location a callee whose last
+    /// parameter is a `Site` receives (see [`Self::site_value`]).
     pub(super) fn generate_call(
         &mut self,
         func: &Expr,
         args: &[Expr],
+        span: &Span,
     ) -> Result<BasicValueEnum<'ctx>, String> {
         // Get function name - only support direct calls for now
         let func_name = if let Expr::Ident { name, .. } = func {
@@ -76,6 +79,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
             }
             "write" => return self.generate_write(args),
+            "__color_enabled" => return self.generate_color_enabled(args),
             // `__exit(code)` — the single native primitive `core.test` builds on,
             // lowered to the `__exit` runtime intrinsic (terminates the process).
             "__exit" => return self.generate_exit(args),
@@ -132,6 +136,10 @@ impl<'ctx> CodeGenerator<'ctx> {
             None
         };
 
+        // Does this call leave off a trailing `Site` for the compiler to fill in? Asked
+        // before the argument values are generated, so the answer is one immutable lookup.
+        let fills_call_site = self.fills_call_site(func_name, args);
+
         // Get the function from the module. If there is no plain top-level function with this
         // name, it may be a method call: the parser desugars `recv.method(a, b)` to
         // `method(recv, a, b)`, so resolve `recv`'s named type and dispatch to `Type_method`.
@@ -156,14 +164,161 @@ impl<'ctx> CodeGenerator<'ctx> {
         };
 
         // Generate argument values
-        let arg_values: Vec<BasicValueEnum> = args
+        let mut arg_values: Vec<BasicValueEnum> = args
             .iter()
             .map(|arg| self.generate_expr(arg))
             .collect::<Result<Vec<_>, _>>()?;
 
+        // Fill in the caller's location when the callee's last parameter is a `Site` the
+        // call left off. A call that passes one explicitly (`assertEq`'s body forwarding its
+        // own `site` to `assert`) matches the full parameter list and so fills in nothing —
+        // which is what propagates the USER's call site through a chain of wrappers instead
+        // of reporting the innermost hop.
+        if fills_call_site {
+            arg_values.push(self.site_value(span)?);
+        }
+
         self.emit_call(function, &arg_values)
     }
 
+    /// Whether a call to `name` passing `args` has its call site filled in — the callee's
+    /// last parameter is a `Site` and the call left exactly that argument off.
+    ///
+    /// The one place codegen asks the question, so argument lowering
+    /// ([`Self::generate_call`]) and tail-call detection ([`Self::is_self_tail_call`]) can
+    /// never disagree about it. The rule itself is [`ast::fills_call_site`]; here it is
+    /// applied to whichever signature the name resolves to — a member of an overload set,
+    /// or a plain top-level function.
+    pub(super) fn fills_call_site(&self, name: &str, args: &[Expr]) -> bool {
+        match self.overloads.contains_key(name) {
+            true => {
+                let arg_types: Vec<Type> = args.iter().map(|a| self.infer_type(a)).collect();
+                self.matching_overload(name, &arg_types)
+                    .is_some_and(|(params, _)| crate::ast::fills_call_site(params, args.len()))
+            }
+            false => self.fn_call_site_arity.get(name) == Some(&(args.len() + 1)),
+        }
+    }
+
+    /// The `Site` a call site fills in: a pointer to a read-only global holding the call's
+    /// path, 1-based line and column, the text of its line, and how many characters of that
+    /// line it spans.
+    ///
+    /// Every field is a compile-time constant, so the record is emitted as a `constant`
+    /// global (it lands in `.rodata`) and the call passes its address. Nothing is allocated
+    /// and nothing is stored at run time — which is what lets a program assert as often as
+    /// it likes: a passing assertion costs its comparison and a pointer argument. Sound
+    /// because a `Site` is immutable by rule: the checker refuses a write to any field of
+    /// one (`TypeError::SiteIsImmutable`), which it has to, since records are handles that
+    /// alias and a write through any binding would be a write to this constant.
+    ///
+    /// One global per distinct call site: the same span asked for twice (a tail-recursive
+    /// self-call is lowered once, but the argument list is walked per tail path) reuses the
+    /// first. This is compile-time interning of identical constants, not a runtime registry.
+    ///
+    /// A span whose file is not in the source map (a program assembled in memory, as the
+    /// IR-only codegen tests do) has no location to report; the site then carries an EMPTY
+    /// `file` — the documented "unknown" signal — with the position left at `1:1` so that
+    /// arithmetic on it (a caret lead of `column - 1`) stays well defined for any reader.
+    pub(super) fn site_value(&mut self, span: &Span) -> Result<BasicValueEnum<'ctx>, String> {
+        // Keyed by the WHOLE span: the constant's `width` comes from the span's length, so
+        // two spans sharing a start offset are not the same site.
+        let key = (span.file, span.start, span.end);
+        if let Some(existing) = self.site_globals.get(&key) {
+            return Ok((*existing).into());
+        }
+
+        let location = self
+            .sources
+            .locate(span)
+            .unwrap_or_else(crate::source_map::Location::unknown);
+        let num = |value: usize| self.context.f64_type().const_float(value as f64).into();
+        // Field values in the declared order, so construction cannot skew against the reads
+        // (which index by `ast::site_fields`' order through the type oracle).
+        let mut values: Vec<BasicValueEnum<'ctx>> = Vec::new();
+        for (name, _) in crate::ast::site_fields() {
+            values.push(match name.as_str() {
+                "file" => self.constant_text(&location.path),
+                "line" => num(location.line),
+                "column" => num(location.column),
+                "excerpt" => self.constant_text(location.excerpt.as_deref().unwrap_or("")),
+                "width" => num(location.width),
+                other => return Err(format!("no call-site value for `Site` field `{other}`")),
+            });
+        }
+
+        // The layout comes from the shared record definition — the same one a `site.line`
+        // read GEPs through — rather than from the constants just built, so the two cannot
+        // skew. A constant that does not fit its slot is a compiler bug, and says so here
+        // instead of producing a global that reads back as garbage.
+        let struct_type = self.record_struct_type(&crate::ast::site_fields())?;
+        for (index, (value, slot)) in values.iter().zip(struct_type.get_field_types()).enumerate() {
+            if value.get_type() != slot {
+                return Err(format!(
+                    "call-site `Site` field {index} is a {:?}, but its slot is a {slot:?}",
+                    value.get_type()
+                ));
+            }
+        }
+        let name = format!("site.{}.{}.{}", span.file, span.start, span.end);
+        let global =
+            self.constant_global(struct_type, struct_type.const_named_struct(&values), &name);
+        // Its natural alignment, not LLVM's PREFERRED alignment for an aggregate this size
+        // (16), which would pad every site by 8 bytes — a program with a site per assertion
+        // pays that per assertion.
+        global.set_alignment(8);
+        let pointer = global.as_pointer_value();
+        self.site_globals.insert(key, pointer);
+        Ok(pointer.into())
+    }
+
+    /// A `Text` `{ptr, i64}` CONSTANT for `value` — usable in a global initializer, unlike
+    /// `text_literal`, which builds its value with the instruction builder.
+    ///
+    /// The byte constants are interned by content: a path repeats in every call site of a
+    /// file, and at `OptimizationLevel::None` nothing merges duplicate globals later.
+    fn constant_text(&mut self, value: &str) -> BasicValueEnum<'ctx> {
+        let bytes = match self.text_constants.get(value) {
+            Some(existing) => *existing,
+            None => {
+                let bytes = self.context.const_string(value.as_bytes(), true);
+                let global = self.constant_global(bytes.get_type(), bytes, "site.str");
+                global.set_alignment(1);
+                let pointer = global.as_pointer_value();
+                self.text_constants.insert(value.to_string(), pointer);
+                pointer
+            }
+        };
+        let len = self.context.i64_type().const_int(value.len() as u64, false);
+        self.ptr_len_struct_type()
+            .const_named_struct(&[bytes.into(), len.into()])
+            .into()
+    }
+
+    /// Add a private, read-only global initialized to `value` — the shape every compile-time
+    /// constant this file emits needs. `constant` is what makes it read-only memory (the
+    /// property call-site immutability rests on) and `unnamed_addr` lets the linker merge
+    /// duplicates. Callers set the alignment: LLVM's default for a global is its PREFERRED
+    /// alignment, which over-pads small constants emitted in bulk.
+    fn constant_global<T: inkwell::types::BasicType<'ctx>>(
+        &self,
+        ty: T,
+        value: impl inkwell::values::BasicValue<'ctx>,
+        name: &str,
+    ) -> inkwell::values::GlobalValue<'ctx> {
+        let global = self
+            .module
+            .add_global(ty, Some(AddressSpace::default()), name);
+        global.set_initializer(&value);
+        global.set_constant(true);
+        global.set_linkage(inkwell::module::Linkage::Private);
+        global.set_unnamed_addr(true);
+        global
+    }
+
+    /// Lower a leaf `@` IO primitive call to its runtime intrinsic. The first is
+    /// `@sleep(seconds :: Num) -> $`, an effect-only pause that waits on the current fiber
+    /// and yields `$` (Unit).
     /// Lower a leaf `@` IO primitive call to its runtime intrinsic. `site` is the span of the
     /// `@`-identifier (the call's launch site), used to attach an origin to a deferred value.
     ///
