@@ -1,6 +1,6 @@
 # Quilon
 
-**A statically-typed, symbol-based language that compiles to native and should make you laugh. Colorless implicit futures on cooperative fibers — concurrency follows data dependence, not program order.**
+**A statically-typed, symbol-based language that compiles to native and should make me laugh. Colorless implicit futures on cooperative fibers — concurrency follows data dependence, not program order.**
 
 Quilon (`.ql`) has no control-flow keywords — syntax is built from symbols (`^`, `<<`, `>>`, `|>`, `::`, `=>`, …). It targets native performance through LLVM with a small, unified type system.
 
@@ -29,16 +29,15 @@ See **[LANGUAGE.md](./docs/LANGUAGE.md)** for the full reference — types, modu
 
 ## Principles
 
-The values that guide **this** language:
+What guides the design:
 
-- **Should make me laugh** — delight is a feature; playful ideas get real priority.
+- **Should make me laugh** — if a feature is a delight, that alone earns it a place.
 - **Colorless concurrency** — implicit futures on cooperative fibers; concurrency follows data dependence, not program order. No `async`/`await`.
 - **Fail loud, never silent** — invalid operations error (a compile error when we can see it, else a crash); never a silent no-op, clamp, or magic sentinel.
-- **Errors as values** — Result-first; no `-1` or null sentinels.
-- **Eat the rich** — objects are as rich as possible, but lazy: parse and compute only what you touch.
-- **No magic, thin primitives** — the stdlib is written in `.ql` over a small set of true primitives.
 - **Overloading, not generics** — ad-hoc overloading is the only polymorphism.
-- **Immutable by default** — `=` binds immutably; `:=` opts into mutation.
+- **Eat the rich** — APIs expose everything up front; parsing and computing happen only when you touch it.
+
+The full list lives in **[LANGUAGE.md](./docs/LANGUAGE.md#design-principles)**.
 
 ## Prerequisites
 
