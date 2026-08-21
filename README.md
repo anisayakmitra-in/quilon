@@ -1,10 +1,10 @@
 # Quilon
 
-**A statically-typed, symbol-based language that compiles to native and should make you laugh. Colorless implicit futures on cooperative fibers — concurrency follows data dependence, not program order.**
+**A statically-typed, symbol-based language that compiles to native and should make me laugh. Colorless implicit futures on cooperative fibers — concurrency follows data dependence, not program order.**
 
 Quilon (`.ql`) has no control-flow keywords — syntax is built from symbols (`^`, `<<`, `>>`, `|>`, `::`, `=>`, …). It targets native performance through LLVM with a small, unified type system.
 
-> **Status: 0.9.1 — "stable basics."** The core language works and is verified end-to-end (it compiles, runs, and is tested). It is **not** feature-complete. For exactly what is and isn't implemented, see the feature matrix in **[LANGUAGE.md](./docs/LANGUAGE.md)**.
+> **Status: 0.9.1 — "stable basics."** The core language compiles, runs, and is tested end-to-end, but it is **not** feature-complete. For what is and isn't implemented, see the feature matrix in **[LANGUAGE.md](./docs/LANGUAGE.md)**.
 
 ## A taste
 
@@ -25,22 +25,29 @@ greet = name :: Text => "Hello, " + name
 >
 ```
 
-See **[LANGUAGE.md](./docs/LANGUAGE.md)** for the full reference (types, modules, pattern matching, I/O, the symbol table, and the feature matrix).
+See **[LANGUAGE.md](./docs/LANGUAGE.md)** for the full reference — types, modules, pattern matching, I/O, the symbol table, and the feature matrix.
+
+## Principles
+
+What guides the design:
+
+- **Should make me laugh** — if a feature is a delight, that alone earns it a place.
+- **Colorless concurrency** — implicit futures on cooperative fibers; no `async`/`await`.
+- **Fail loud, never silent** — invalid operations error (a compile error when we can see it, else a crash); never a silent no-op, clamp, or magic sentinel.
+- **Overloading, not generics** — ad-hoc overloading is the only polymorphism.
+- **Eat the rich** — APIs expose everything up front; parsing and computing happen only when you touch it.
+
+The full list lives in **[LANGUAGE.md](./docs/LANGUAGE.md#design-principles)**.
 
 ## Prerequisites
 
 Install these **before** building or running Quilon:
 
-- **LLVM 22** — the compiler backend (via inkwell). Debian/Ubuntu: install from [apt.llvm.org](https://apt.llvm.org); Arch: `llvm`; macOS: `brew install llvm@22` (or the current `llvm`).
-- **libgc (Boehm GC)** — the runtime garbage collector, and a hard dependency: it is required to **build** the `quilon` compiler, to **`quilon run`** (the JIT resolves `GC_*` in-process), **and** it is **dynamically linked into the native executables** produced by `quilon build` — so libgc must also be present wherever those binaries run. Packages: `libgc-dev` (Debian/Ubuntu), `gc` (Arch), `bdw-gc` (Homebrew).
-- **A C toolchain** — `clang` (default) or `gcc`. Used by `quilon build` to link the native executable (the object file is generated in-process via LLVM's `TargetMachine`, so no external `llc` is needed). Not needed for `quilon run` (JIT).
+- **LLVM 22** — the compiler backend (via inkwell). Debian/Ubuntu: [apt.llvm.org](https://apt.llvm.org); Arch: `llvm`; macOS: `brew install llvm@22`.
+- **libgc (Boehm GC)** — the runtime GC, and a hard dependency: needed to build the compiler, to `quilon run` (the JIT resolves `GC_*` in-process), and dynamically linked into `quilon build` binaries — so it must be present wherever those binaries run. Packages: `libgc-dev` (Debian/Ubuntu), `gc` (Arch), `bdw-gc` (Homebrew).
+- **A C toolchain** — `clang` (default) or `gcc`, used by `quilon build` to link the executable. Not needed for `quilon run`.
 
-A compiled `quilon` binary is otherwise **self-contained**: the runtime static
-library (`libquilon_rt.a`) is embedded, gzip-compressed, in the binary itself,
-so `quilon build` works from a bare binary download (e.g. a GitHub release)
-with no extra files — the first build decompresses the runtime into
-`$XDG_CACHE_HOME/quilon` (default `~/.cache/quilon`); later builds reuse that
-cached copy. Only the system libraries above (notably libgc) must be installed.
+The `quilon` binary is otherwise **self-contained**: the runtime library (`libquilon_rt.a`) is embedded in it (gzip-compressed, decompressed to `~/.cache/quilon` on first build), so `quilon build` works from a bare download with no extra files. Only the system libraries above (notably libgc) need installing.
 
 ## Build & run
 
@@ -52,52 +59,20 @@ cargo build --release                        # binary at target/release/quilon
 ./target/release/quilon check program.ql     # typecheck only
 ```
 
-`cargo build --release` is all you need: `quilon build` locates the runtime
-static library (`libquilon_rt.a`) automatically — a `QUILON_RT_LIB` environment
-variable override, then a copy next to the `quilon` binary (the build script
-places one there), then the compressed copy embedded in the binary (see
-Prerequisites) — no extra step. Native builds link with `clang` by default;
-pass `--linker gcc` to use gcc instead.
+`cargo build --release` is all you need — `quilon build` locates the embedded runtime automatically. Native builds link with `clang` by default; pass `--linker gcc` to use gcc.
 
 ## Releasing
 
-Run `./scripts/release.sh` from a clean `main`. It reads the version from
-`Cargo.toml`, verifies `quilon-rt` matches and that `CHANGELOG.md` has a dated
-top-most section for it, runs the full gate, then tags `v<version>` and pushes
-it — which triggers CI to build and publish the GitHub release. Pass `--dry-run`
-to run every check and preview the tag without tagging or pushing.
+Run `./scripts/release.sh` from a clean `main`: it checks the `Cargo.toml`/`quilon-rt` versions and a dated `CHANGELOG.md` section, runs the full gate, then tags `v<version>` and pushes — which triggers CI to build and publish the GitHub release. Pass `--dry-run` to preview without tagging or pushing.
 
 ## Vision (aspirational)
 
-The longer-term goals that motivate the design — **not all implemented in 0.9**:
-
-- **Implicit parallelism** — sequential-looking code, parallel execution.
-- **Deep immutability** — immutable by default, enabling fearless parallelism.
-- **No function coloring** — non-blocking I/O without `async`/`await`.
-- **Web-first** — a systems-level language aimed at high-performance web services.
-
-Today these are direction, not delivered features; the runtime is single-threaded and the parallel/non-blocking machinery is not built yet.
+Beyond 0.9, the design aims at **implicit parallelism** — sequential-looking code, parallel execution — and a **web-first** systems language for high-performance services. Today the runtime is single-threaded; the parallel/non-blocking machinery is direction, not delivered.
 
 ## Licensing
 
-**Quilon the compiler is free software under the GNU GPL, version 2** (see
-[LICENSE.md](./LICENSE.md)). If you fork or modify the compiler — or the runtime
-library — that work stays GPLv2. The copyleft is intact.
+**The Quilon compiler is free software under the GNU GPL v2** ([LICENSE.md](./LICENSE.md)) — forks and runtime modifications stay GPLv2.
 
-**Programs you compile with Quilon are yours to license however you want.** The
-Quilon runtime (`quilon-rt`) is statically linked and embedded into every binary
-`quilon build` produces, and normally GPL code linked into your program would
-pull the whole thing under the GPL. To prevent that, `quilon-rt` is
-**GPLv2 _with_ a Classpath-style runtime-library exception** (see
-[LICENSE-EXCEPTION.md](./LICENSE-EXCEPTION.md), the same model GCC and OpenJDK
-use). The exception also covers the runtime boilerplate the compiler emits into
-your output (such as the generated C-compatible `main()` wrapper). So the mere
-presence of these runtime bits does **not** place your compiled program under
-the GPL — you may release it under any license, including proprietary ones.
+**Programs you compile are yours to license however you want.** The runtime (`quilon-rt`) is statically linked into every binary `quilon build` produces, but it ships **GPLv2 _with_ a Classpath-style runtime-library exception** ([LICENSE-EXCEPTION.md](./LICENSE-EXCEPTION.md) — the model GCC and OpenJDK use), which also covers the runtime boilerplate the compiler emits (such as the generated C-compatible `main()`). So your output may be any license, including proprietary. The exception frees only the combined output; forking `quilon-rt` itself stays GPLv2.
 
-The exception is an *additional grant on top of* GPLv2 and frees only the
-combined output. Forking `quilon-rt` itself remains GPLv2.
-
-Compiled programs also link **libgc (the Boehm GC)**, a separate third-party
-dependency under its own permissive, MIT-style license. It is not covered by,
-and does not need, the exception; its own license applies to it.
+Compiled binaries also link **libgc (the Boehm GC)**, a separate third-party dependency under its own permissive, MIT-style license.
