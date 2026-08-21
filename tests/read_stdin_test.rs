@@ -68,7 +68,9 @@ fn run_with_stdin(mut command: Command, input: &[u8]) -> (Option<i32>, String) {
         .expect("child stdin")
         .write_all(input)
         .expect("write to child stdin");
-    let output = child.wait_with_output().expect("wait for quilon subprocess");
+    let output = child
+        .wait_with_output()
+        .expect("wait for quilon subprocess");
     (
         output.status.code(),
         String::from_utf8_lossy(&output.stdout).into_owned(),
@@ -100,7 +102,11 @@ fn jit_read_forces_at_a_strict_comparison() {
 
     // Matching input: the deferred value forces to "hello" at the compare → assertion holds.
     let (code, _) = jit_run(&file, b"hello\n");
-    assert_eq!(code, Some(0), "@read value should force to \"hello\" and pass");
+    assert_eq!(
+        code,
+        Some(0),
+        "@read value should force to \"hello\" and pass"
+    );
 
     // Different input: the SAME forced value must reach the compare and fail the assertion —
     // proving the real read flowed through, not a constant.
