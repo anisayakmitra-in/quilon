@@ -799,7 +799,7 @@ The type checker verifies matches are exhaustive (use `_` to cover the rest). (S
 
 >> add = (a, b) => a + b   ~ `>>` exports an item; unmarked items are file-private
 ```
-- The built-in modules are `core.io` (I/O), `core.test` (assertions), `core.cli` (argv/env helpers), and `core.time` (the [`@sleep`](#concurrency--colorless-implicit-futures--in-progress) leaf IO primitive and the monotonic `now()` clock); their members are real functions.
+- The built-in modules are `core.io`, `core.test`, `core.cli`, and `core.time`; their members are real functions. See the [Standard library](#standard-library) index for each module's API reference.
 - `Text` and the operators are built-ins and need **no** import.
 - A module exposes only its `>>`-exported items.
 
@@ -807,26 +807,20 @@ The type checker verifies matches are exhaustive (use `_` to cover the rest). (S
 
 ---
 
-## I/O — `<< core.io`
+## Standard library
 
-| Function | Effect |
-|----------|--------|
-| `print(x) -> $` | Write `x` to stdout, **with a trailing newline**. Accepts a value of **any type**, rendered through its [`` ` `` render operator](#string-interpolation-and-the-render-operator) — so a `Bool` prints `True`/`False`, and records/sum types/arrays print via their default (or overridden) rendering. Returns `$` (Unit). A user `print` definition with a concrete signature *adds* an overload that wins for that type. |
-| `eprint(x) -> $` | Same, to stderr. Returns `$` (Unit). |
-| `write(content :: Text, fd :: Num) -> Num` | Write raw bytes (no newline) to a file descriptor; returns bytes written. |
-| `@readStdin() -> Text` | Read one line from stdin (without the trailing newline). A [leaf IO primitive](#concurrency--colorless-implicit-futures--in-progress): it launches the read and returns a **deferred** `Text` forced on first strict use. Yields `""` at end-of-input. |
-| `stdout`, `stderr` | The standard file descriptors. |
+The corelib modules ship with Quilon; import one with `<< core.<module>`. Each has its
+own focused API reference under [`docs/corelib/`](corelib/) — signatures, behavior, and a
+small example per function.
 
-```quilon
-<< core.io
-^ = () -> Num => <
-  print("hello")            ~ stdout: hello\n
-  "raw" |> write(stdout)    ~ stdout: raw   (no newline)
-  eprint("oops")            ~ stderr: oops\n
-  0
->
-```
-There is no `println` — `print` owns the newline; `write` is the raw form. (See `examples/io.ql`.)
+| Module | Import | What it gives you |
+|--------|--------|-------------------|
+| [`core.io`](corelib/io.md) | `<< core.io` | Output to file descriptors and stdin: `print` / `eprint` / `write`, the `stdout` / `stderr` descriptors, and the deferred `@readStdin` line read. |
+| [`core.test`](corelib/test.md) | `<< core.test` | In-language assertions for self-verifying programs, reporting the caller's `file:line:column`: `assert` (+ `AssertOpts`) / `assertEq` / `assertNotEq` / `assertOk` / `assertNotOk` / `failAt` (fail → exit 101). |
+| [`core.cli`](corelib/cli.md) | `<< core.cli` | Pipe-friendly helpers over the entry point's `args` / `env`: `getEnv` / `hasFlag` / `getOpt`. |
+| [`core.time`](corelib/time.md) | `<< core.time` | Time primitives: the `@sleep` pause and the monotonic `now()` clock. |
+
+`Text` and the operators are built-ins and need **no** import. The [concurrency model](#concurrency--colorless-implicit-futures--in-progress) that governs the `@` leaf primitives (`@readStdin`, `@sleep`) is language semantics — see that section.
 
 ---
 
@@ -883,7 +877,7 @@ not on a lambda or a nested declaration (called through a value, not by name), a
 record method (dispatched by receiver type). The arity a caller sees never counts it —
 `whereAmI()` above takes no arguments as far as the call site is concerned.
 
-This is the mechanism [`core.test`'s assertions](#assertions--core-test) report your call
+This is the mechanism [`core.test`'s assertions](corelib/test.md) report your call
 site with; nothing about it is specific to them. **It costs nothing while the program
 runs.** Every field is a compile-time constant, so each call site is emitted as a read-only
 constant and the call passes its address — no allocation, no stores, no unwinder, and no
@@ -893,68 +887,6 @@ report around it are built only on the failing branch. Assert as often as you li
 hottest loop you have. (What a site does cost is image space — the record, plus two
 relocations for its `Text` fields in a position-independent executable.) (See
 `examples/call_site.ql`.)
-
----
-
-## Assertions — `<< core.test`
-
-In-language assertions for **self-verifying programs and examples**. A holding
-assertion does nothing; a **failing** one reports to **stderr** and exits the process with
-code **101** (the Rust-panic convention, distinct from the 0 a passing program exits with),
-so a broken program fails loudly in CI. Every example in `examples/` is written this way: it
-asserts each result it demonstrates and exits 0 on success — the examples gate runs them all
-under the JIT and native AOT.
-
-A failure says **where** it failed, in the same shape as a compiler
-[error](#error-messages) — position, message, source line, caret run:
-
-```text
-demo.ql:12:3: assertion failed: expected 42, got 41
-   |
-12 |   assertEq(answer(), 42)
-   |   ^^^^^^^^^^^^^^^^^^^^^^
-```
-
-The location is **your** call site, never an internal hop: `assertEq` fails several calls
-deep inside `core.test`, and still points at the line where your program called `assertEq`
-— including when that line is inside a helper function rather than `^`. Each assertion
-takes a trailing [`site :: Site`](#call-site-locations--site) the compiler fills in and the
-wrappers forward. The report is **colored** when stderr is a terminal, and plain when it is
-redirected or `NO_COLOR` / `TERM=dumb` is set — decided per run, so a CI log and a piped
-build stay clean.
-
-| Function | Effect |
-|----------|--------|
-| `assert(cond :: Bool) -> $` | The primitive. If `cond` is false, report `assertion failed` at the call site and exit `101`; otherwise do nothing. Returns `$` (Unit). |
-| `assert(cond :: Bool, opts :: AssertOpts) -> $` | Same, but reports `opts.message` instead of the default. An [overload](#overloading) of `assert`. |
-| `AssertOpts` | Options record for `assert`: `{ message :: Text }`. The extensible knob (more options may be added later). Records are nominal, so construct it by name: `AssertOpts { message = "..." }`. |
-| `assertEq(actual, expected) -> $` | Assert `actual == expected`; the report names both (`expected 42, got 41`; `Text` values quoted, so a stray space is visible). An [overload set](#overloading) over `Num`/`Text`/`Bool`. |
-| `assertNotEq(a, b) -> $` | Assert `a != b`; the report names the (equal) value. Overloaded over `Num`/`Text`/`Bool`. |
-| `assertOk(r :: Result) -> $` | Assert `r` is `Ok`; fail on `NotOk`. |
-| `assertNotOk(r :: Result) -> $` | Assert `r` is `NotOk`; fail on `Ok`. |
-| `failAt(message :: Text) -> $` | Fail outright: report `message` at the caller's location and exit `101`. The primitive the assertions above are built from, and what an assertion of your own calls — take a trailing `site :: Site` and forward it, and yours reports ITS caller too. |
-
-```quilon
-<< core.test
-^ = () -> $ => <
-  assert(1 + 1 == 2)
-  assert(1 + 1 == 2, AssertOpts { message = "math is broken" })
-  assertEq(6 * 7, 42)
-  assertNotEq("a", "b")
-  assertOk([10, 20].at(0))       ~ Ok in bounds
-  assertNotOk([10, 20].at(9))    ~ NotOk out of bounds
->
-```
-
-`assertEq`/`assertNotEq` build their message with
-[interpolation](#string-interpolation-and-the-render-operator), so the values appear
-rendered — `Num`/`Text`/`Bool` directly, and records, sum types, and arrays through their
-`` ` `` render operator. The whole module is pure Quilon (`corelib/test.ql`): the report is
-composed and printed in-language from the `Site` fields, built on `assert`, `==`/`!=`,
-pattern matching, and `Text.repeat` for the caret run — its only native primitives are the
-internal process-exit and terminal-detection intrinsics. (See
-`examples/assert_demo.ql`, and `examples/assert_location.ql`, which fails on purpose to
-show the report.)
 
 ---
 
@@ -989,35 +921,6 @@ compile-time error, reported by `check` as well as `run`/`build`.
 **Exit code:** if `^`'s body evaluates to a `Num`, that value is the exit code. If the body is **not** a `Num` (e.g. a side-effecting block), the program exits **0** — so an effect-only `main` needs no trailing `0`. (This implicit-0 applies only to `^`; ordinary functions always return their last expression's value.)
 
 (See `examples/hello_world.ql` and `examples/args.ql`.)
-
----
-
-## CLI helpers — `<< core.cli`
-
-Thin, pipe-friendly helpers over the entry point's `args :: []Text` and
-`env :: [][]Text`. The data is always the **first** parameter, so
-`env |> getEnv("PATH")` and `args |> hasFlag("-v")` read naturally.
-
-| Function | Result |
-|----------|--------|
-| `getEnv(env :: [][]Text, key :: Text) -> Result` | Find the pair whose `[0]` equals `key`; `Ok(value)` (its `[1]`) if present, else `NotOk`. |
-| `hasFlag(args :: []Text, flag :: Text) -> Bool` | `true` when the bare flag appears in `args`. The name works **with or without** a leading `--` (so `"verbose"` and `"--verbose"` both match an arg `"--verbose"`). |
-| `getOpt(args :: []Text, name :: Text) -> Result` | Collect the option's values (argv[0] skipped), recognising both `--name value` and `--name=value`; the name works with or without `--`. Returns `Ok([]Text)` of the values in argv order (an option may repeat), or `NotOk(name)` when no value is found — the name never appears, or appears only as a trailing `--name` with nothing after it. (The `--name=value` form always supplies a value, even the empty one in `--name=`.) |
-
-```quilon
-<< core.cli
-^ = (args :: []Text, env :: [][]Text) -> Num => <
-  home :: Text = env |> getEnv("HOME") ? | Ok(v) => v | NotOk(_) => "?"
-  verbose :: Bool = args |> hasFlag("-v")
-  outputs :: []Text = args |> getOpt("--out") ? | Ok(vs) => vs | NotOk(_) => args.filter(x => false)
-  verbose ? 0 : outputs.size
->
-```
-
-The whole module is pure Quilon (`corelib/cli.ql`) — built only from the array
-methods (`.find`/`.filter`/`.reduce`), array indexing, ranges (`<-`), and the `Text`
-methods (`.slice`/`.indexOf`/`.contains`/`==`/`+`); it adds no compiler intrinsics.
-(See `examples/cli.ql`.)
 
 ---
 
@@ -1217,7 +1120,7 @@ source location (a missing file, an unresolved import) print a plain one-line
 message instead. Any compile error exits with status 1.
 
 A **run-time** failure that knows its call site — a failing
-[`core.test` assertion](#assertions--core-test) — reports in the same shape, from the same
+[`core.test` assertion](corelib/test.md) — reports in the same shape, from the same
 position resolver, so a program's own failures read like the compiler's.
 
 To stay robust on hostile or machine-generated input, the parser also caps how

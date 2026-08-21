@@ -98,7 +98,7 @@ ever returns it will be **explicit** (a someday `mapParallel`), never inferred.
 Quilon's north-star **"parallelism"**: the **colorless implicit-futures / promise-pipelining**
 model — `@` leaf IO primitives, deferred values that propagate as they flow, and forcing
 only at strict operations, so independent IO overlaps with nothing written. The design is
-locked in [`LANGUAGE.md`](LANGUAGE.md#concurrency--colorless-implicit-futures-planned)
+locked in [`LANGUAGE.md`](LANGUAGE.md#concurrency--colorless-implicit-futures--in-progress)
 and specified in full in [#120]. Built smallest-first:
 
 | Item | Status |
