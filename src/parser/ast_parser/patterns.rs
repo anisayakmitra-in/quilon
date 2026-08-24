@@ -6,8 +6,8 @@
 use super::*;
 
 impl<'a> Parser<'a> {
-    pub(super) fn parse_match(&mut self, expr: Expr) -> Result<Expr, ParseError> {
-        let start = expr.span().start;
+    pub(super) fn parse_match(&mut self, expression: Expression) -> Result<Expression, ParseError> {
+        let start = expression.span().start;
         let mut arms = Vec::new();
 
         // Parse match arms: | pattern => body
@@ -16,7 +16,7 @@ impl<'a> Parser<'a> {
 
             let pattern = self.parse_pattern()?;
             self.expect(&TokenKind::Arrow)?;
-            let body = self.parse_expr()?;
+            let body = self.parse_expression()?;
             let arm_span = self.span(pattern.span().start, body.span().end);
 
             arms.push(crate::ast::MatchArm {
@@ -35,8 +35,8 @@ impl<'a> Parser<'a> {
 
         let end = arms.last().unwrap().span.end;
 
-        Ok(Expr::Match {
-            expr: Box::new(expr),
+        Ok(Expression::Match {
+            expression: Box::new(expression),
             arms,
             span: self.span(start, end),
         })
@@ -64,11 +64,11 @@ impl<'a> Parser<'a> {
                 // Check if it's a constructor: Name(patterns) or Name pattern
                 if self.check(&TokenKind::ParenOpen) {
                     self.advance();
-                    let mut args = Vec::new();
+                    let mut arguments = Vec::new();
 
                     if !self.check(&TokenKind::ParenClose) {
                         loop {
-                            args.push(self.parse_pattern()?);
+                            arguments.push(self.parse_pattern()?);
                             if !self.check(&TokenKind::Comma) {
                                 break;
                             }
@@ -81,7 +81,7 @@ impl<'a> Parser<'a> {
 
                     Ok(Pattern::Constructor {
                         name,
-                        args,
+                        arguments,
                         span: self.span(span.start, end),
                     })
                 } else if is_capitalized(&name) {
@@ -89,12 +89,12 @@ impl<'a> Parser<'a> {
                     // (e.g. `| Red =>`), not a binding. Lowercase names bind a value.
                     Ok(Pattern::Constructor {
                         name,
-                        args: vec![],
+                        arguments: vec![],
                         span,
                     })
                 } else {
                     // Just an identifier pattern (binds the scrutinee value)
-                    Ok(Pattern::Ident { name, span })
+                    Ok(Pattern::Identifier { name, span })
                 }
             }
             TokenKind::Number(value) => {

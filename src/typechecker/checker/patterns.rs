@@ -9,32 +9,32 @@ use super::*;
 impl TypeChecker {
     pub(super) fn check_match(
         &mut self,
-        expr: &Expr,
+        expression: &Expression,
         arms: &[MatchArm],
         span: &Span,
     ) -> Result<Type, TypeError> {
-        let expr_type = self.infer_expr(expr)?;
+        let expression_type = self.infer_expression(expression)?;
 
         if arms.is_empty() {
             return Err(TypeError::NonExhaustiveMatch { span: span.clone() });
         }
 
         // Check exhaustiveness for sum types
-        if let Type::Sum { ref variants, .. } = expr_type {
+        if let Type::Sum { ref variants, .. } = expression_type {
             self.check_exhaustiveness(variants, arms, span)?;
         }
 
-        // Check each arm's pattern against expr_type
+        // Check each arm's pattern against expression_type
         let mut result_type = None;
 
         for arm in arms {
-            self.check_pattern(&arm.pattern, &expr_type)?;
+            self.check_pattern(&arm.pattern, &expression_type)?;
 
             // Bind pattern variables and check body
             self.env.push_scope();
-            self.bind_pattern_vars(&arm.pattern, &expr_type)?;
+            self.bind_pattern_vars(&arm.pattern, &expression_type)?;
 
-            let body_type = self.infer_expr(&arm.body)?;
+            let body_type = self.infer_expression(&arm.body)?;
 
             self.env.pop_scope();
 
@@ -78,7 +78,7 @@ impl TypeChecker {
 
         for arm in arms {
             match &arm.pattern {
-                Pattern::Wildcard { .. } | Pattern::Ident { .. } => {
+                Pattern::Wildcard { .. } | Pattern::Identifier { .. } => {
                     has_wildcard = true;
                 }
                 Pattern::Constructor { name, .. } => {
@@ -109,12 +109,16 @@ impl TypeChecker {
         expected_type: &Type,
     ) -> Result<(), TypeError> {
         match pattern {
-            Pattern::Ident { .. } => Ok(()), // Any type can bind to ident
+            Pattern::Identifier { .. } => Ok(()), // Any type can bind to ident
             Pattern::Number { .. } => {
                 self.check_type_compatibility(&Type::Num, expected_type, pattern.span())
             }
             Pattern::Wildcard { .. } => Ok(()), // Wildcard matches anything
-            Pattern::Constructor { name, args, span } => {
+            Pattern::Constructor {
+                name,
+                arguments,
+                span,
+            } => {
                 // Check if the constructor matches the expected type
                 // For now, accept all constructors - proper sum type checking would verify
                 // that the constructor belongs to the expected sum type
@@ -125,10 +129,10 @@ impl TypeChecker {
 
                         if let Some(variant) = variant {
                             // Check that argument count matches
-                            if variant.fields.len() != args.len() {
+                            if variant.fields.len() != arguments.len() {
                                 return Err(TypeError::WrongNumberOfArguments {
                                     expected: variant.fields.len(),
-                                    got: args.len(),
+                                    got: arguments.len(),
                                     span: span.clone(),
                                 });
                             }
@@ -139,9 +143,9 @@ impl TypeChecker {
                             // silently ignored — the arm would match ANY payload of the
                             // variant, taking the wrong arm with no diagnostic. Reject
                             // it here until codegen tests payloads.
-                            for pattern_arg in args {
+                            for pattern_arg in arguments {
                                 match pattern_arg {
-                                    Pattern::Ident { .. } | Pattern::Wildcard { .. } => {}
+                                    Pattern::Identifier { .. } | Pattern::Wildcard { .. } => {}
                                     Pattern::Number { .. } | Pattern::Constructor { .. } => {
                                         return Err(TypeError::RefutableConstructorArg {
                                             constructor: name.clone(),
@@ -174,28 +178,29 @@ impl TypeChecker {
         type_: &Type,
     ) -> Result<(), TypeError> {
         match pattern {
-            Pattern::Ident { name, span } => {
+            Pattern::Identifier { name, span } => {
                 self.env
                     .define(name.clone(), type_.clone(), false, span.clone())?;
                 Ok(())
             }
             Pattern::Constructor {
                 name: constructor_name,
-                args,
+                arguments,
                 ..
             } => {
-                // For sum type constructors, bind args with their field types
+                // For sum type constructors, bind arguments with their field types
                 if let Type::Sum { variants, .. } = type_ {
                     // Find the variant that matches this constructor
                     if let Some(variant) = variants.iter().find(|v| &v.name == constructor_name) {
                         // Bind each argument with its corresponding field type
-                        for (arg_pattern, field_type) in args.iter().zip(variant.fields.iter()) {
+                        for (arg_pattern, field_type) in arguments.iter().zip(variant.fields.iter())
+                        {
                             self.bind_pattern_vars(arg_pattern, field_type)?;
                         }
                     }
                 } else {
                     // Not a sum type - fall back to binding with the same type
-                    for arg in args {
+                    for arg in arguments {
                         self.bind_pattern_vars(arg, type_)?;
                     }
                 }
