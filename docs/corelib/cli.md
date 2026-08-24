@@ -1,9 +1,9 @@
 # `core.cli` — CLI helpers
 
-Import with `<< core.cli`. See the [Standard library index](../LANGUAGE.md#standard-library) and `examples/cli.ql`.
+Import with `<< core.cli`. See the [corelib index](../LANGUAGE.md#corelib) and `examples/cli.ql`.
 
-Thin, pipe-friendly helpers over the [entry point](../LANGUAGE.md#entry-point)'s `args :: []Text` and
-`env :: [][]Text`. The data is always the **first** parameter, so
+Thin, pipe-friendly helpers over the [entry point](../LANGUAGE.md#entry-point)'s
+`args :: []Text` and `env :: [][]Text`. The data is always the **first** parameter, so
 `env |> getEnv("PATH")` and `args |> hasFlag("-v")` read naturally.
 
 | Function | Result |
@@ -22,7 +22,4 @@ Thin, pipe-friendly helpers over the [entry point](../LANGUAGE.md#entry-point)'s
 >
 ```
 
-The whole module is pure Quilon (`corelib/cli.ql`) — built only from the array
-methods (`.find`/`.filter`/`.reduce`), array indexing, ranges (`<-`), and the `Text`
-methods (`.slice`/`.indexOf`/`.contains`/`==`/`+`); it adds no compiler intrinsics.
 (See `examples/cli.ql`.)

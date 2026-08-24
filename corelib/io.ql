@@ -17,11 +17,8 @@
 ~     0
 ~   >
 ~
-~ These are part of the core library's public surface (exported with the `>>`
-~ prefix) but are *compiler-lowered*: the code generator recognizes calls to
-~ `print`/`eprint`/`write` and emits the matching runtime intrinsic (see
-~ src/runtime/intrinsics.rs and CodeGenerator::generate_print / generate_write).
-~ The function bodies below are inert placeholders; the lowering never emits them.
+~ `print`/`eprint`/`write` are compiler-lowered to runtime intrinsics, so the bodies below
+~ are inert placeholders — never emitted, and not the place to change behavior.
 ~ `stdout`/`stderr` are ordinary Num constants (file descriptors).
 
 ~ Standard output / error file descriptors.
@@ -45,6 +42,5 @@
 ~ `@readStdin` is a leaf IO primitive (the `@` marker): calling it launches the read in the
 ~ background and hands back a DEFERRED Text immediately — the fiber only waits (forces) once
 ~ a strict operation reads the bytes (a comparison, `print`, a native call, ...). At
-~ end-of-input it yields the empty Text `""`. The body below is an inert placeholder; the
-~ code generator lowers `@readStdin()` to the runtime read/force intrinsics.
+~ end-of-input it yields the empty Text `""`. The body below is an inert placeholder.
 >> @readStdin = () -> Text => ""

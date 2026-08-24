@@ -1,10 +1,8 @@
 ~ Call-site locations — the `Site` parameter.
 ~
 ~ A function whose LAST parameter is a `Site` receives the location of the call that left
-~ that argument off: file, line, column, the text of the line, and how wide the call is.
-~ Forwarding a received `site` on to another such function reports the ORIGINAL caller
-~ instead of the hop — which is how `core.test`'s assertions blame your `assertEq` call
-~ rather than their own internals.
+~ that argument off. Forwarding a received `site` on reports the ORIGINAL caller rather
+~ than the hop, which is how `core.test`'s assertions blame your `assertEq` call.
 ~
 ~ Run: cargo run -- run examples/call_site.ql    ~ exits 0 — it checks itself
 << core.test
@@ -21,14 +19,12 @@ callerFile = (site :: Site) -> Text => site.file
 callerSource = (site :: Site) -> Text => site.excerpt
 
 ~ A `Site` is read-only — a location is a value, not a variable, so `site.line := 9` is a
-~ compile error. That is what lets the compiler lower each call site to one shared
-~ constant, which is why filling one in costs nothing while the program runs.
+~ compile error.
 ~
 ~ A hop that FORWARDS its own site: the location stays the outermost caller's.
 throughAWrapper = (site :: Site) -> Num => callerLine(site)
 
-~ An assertion of your own, reporting the caller's location through `core.test`'s
-~ `failAt` — the same primitive `assert` and `assertEq` are built on.
+~ An assertion of your own, reporting its caller's location through `core.test`'s `failAt`.
 assertEven = (n :: Num, site :: Site) -> $ =>
   n % 2 == 0 ? $ : failAt("assertion failed: `n` is odd", site)
 
