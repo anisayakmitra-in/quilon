@@ -11,7 +11,7 @@
 >> Body = { content :: Text, contentType :: Text }
 
 ~ The HTTP method. Body-bearing methods carry a `Body`; the rest are nullary.
->> Method = Get / Post(Body) / Put(Body) / Delete / Head
+>> Method = Get / Post(Body) / Put(Body) / Query(Body) / Delete / Head
 
 ~ A request: the method and the target URL (`http://host[:port]/path`, scheme optional).
 >> Request = { method :: Method, url :: Text }
@@ -22,15 +22,17 @@
 ~ Serialise a `Request` into the raw HTTP/1.0 request bytes sent over the wire.
 >> requestText = (request :: Request) -> Text => <
   verb = (method :: Method) -> Text => method ?
-    | Get     => "GET"
-    | Post(_) => "POST"
-    | Put(_)  => "PUT"
-    | Delete  => "DELETE"
-    | Head    => "HEAD"
+    | Get      => "GET"
+    | Post(_)  => "POST"
+    | Put(_)   => "PUT"
+    | Query(_) => "QUERY"
+    | Delete   => "DELETE"
+    | Head     => "HEAD"
   payload = (method :: Method) -> Body => method ?
-    | Post(carried) => carried
-    | Put(carried)  => carried
-    | _             => Body { content = "", contentType = "" }
+    | Post(carried)  => carried
+    | Put(carried)   => carried
+    | Query(carried) => carried
+    | _              => Body { content = "", contentType = "" }
   afterScheme = request.url.indexOf("://") ?
     | Ok(mark) => request.url.slice(mark + 3, request.url.length)
     | NotOk(_) => request.url

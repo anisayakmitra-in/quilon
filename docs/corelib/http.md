@@ -2,32 +2,30 @@
 
 Import with `<< core.http`. See the [corelib index](../LANGUAGE.md#corelib).
 
-A minimal HTTP client written entirely in Quilon on top of [`core.net`](net.md)'s
-`@tcpRequest`. Each request opens one connection, sends `Connection: close`, and reads the
-close-delimited reply. **HTTP only — no TLS**, so URLs are plain `http://…` (default port
-80). `Request` and `Response` are rich-but-lazy: they hold the raw data and parse fields
-when an accessor reads them.
+A minimal HTTP client written in Quilon over [`core.net`](net.md)'s `@tcpRequest`. **HTTP only, no TLS** — URLs are `http://host[:port]/path` (default port 80). Each request opens one connection, sends `Connection: close`, and reads the close-delimited reply.
 
 ## Types
 
-| Type | Shape | Meaning |
-|------|-------|---------|
-| `Body` | `{ content :: Text, contentType :: Text }` | A request body and the media type to advertise. |
-| `Method` | `Get / Post(Body) / Put(Body) / Delete / Head` | The HTTP method; the body-bearing methods carry a `Body`. |
-| `Request` | `{ method :: Method, url :: Text }` | A request: the method and target URL (`http://host[:port]/path`, scheme optional). |
-| `Response` | `{ raw :: Text }` | A reply: the raw bytes. Read fields with `status` / `header` / `body`. |
+| Type | Shape |
+|------|-------|
+| `Body` | `{ content :: Text, contentType :: Text }` |
+| `Method` | `Get / Post(Body) / Put(Body) / Query(Body) / Delete / Head` — the body-bearing methods carry a `Body`. |
+| `Request` | `{ method :: Method, url :: Text }` |
+| `Response` | `{ raw :: Text }` — read fields with `status` / `header` / `body`. |
 
 ## Functions
 
-| Function | Result | Effect |
-|----------|--------|--------|
-| `get(url :: Text) -> Result` | `Ok(Response)` / `NotOk(Text)` | Build a GET `Request` for `url` and `send` it. |
-| `send(request :: Request) -> Result` | `Ok(Response)` / `NotOk(Text)` | Perform `request` over `core.net` and parse the reply. |
-| `requestText(request :: Request) -> Text` | — | Serialise a `Request` into the raw HTTP/1.0 request bytes sent over the wire. |
-| `parseResponse(raw :: Text) -> Result` | `Ok(Response)` / `NotOk(Text)` | Wrap raw response bytes as a `Response`, validating the status line is present. |
-| `status(response :: Response) -> Num` | — | The numeric status code from the status line (`HTTP/1.0 200 OK` → `200`). |
-| `header(response :: Response, name :: Text) -> Result` | `Ok(Text)` / `NotOk(Text)` | Look up a header by name (case-insensitive). |
-| `body(response :: Response) -> Text` | — | Everything after the blank line separating headers from body. |
+| Function | Result |
+|----------|--------|
+| `get(url :: Text) -> Result` | Build a GET `Request` for `url` and `send` it: `Ok(Response)` / `NotOk(Text)`. |
+| `send(request :: Request) -> Result` | Perform `request` over `core.net` and parse the reply; a transport failure comes back as `NotOk(Text)`. |
+| `requestText(request :: Request) -> Text` | The raw HTTP/1.0 request bytes for `request`. |
+| `parseResponse(raw :: Text) -> Result` | Wrap raw bytes as a `Response`, checking the status line is present. |
+| `status(response :: Response) -> Num` | The status code (`HTTP/1.0 200 OK` → `200`). |
+| `header(response :: Response, name :: Text) -> Result` | A header value by name, case-insensitive: `Ok(Text)` / `NotOk(Text)`. |
+| `body(response :: Response) -> Text` | Everything after the blank line. |
+
+`Query` serialises like `Post` (method token `QUERY`, body, `Content-Length`); its `Accept-Query` reply header reads back through `header`.
 
 ```quilon
 << core.http
@@ -42,7 +40,4 @@ when an accessor reads them.
 >
 ```
 
-`send` propagates a transport failure from `@tcpRequest` as `NotOk(error)`, so a network
-error never crashes the program — match the `Result` to handle it. `examples/http_parse.ql`
-exercises the offline half (building requests, parsing responses) with no network;
-`examples/http_get.ql` makes a live GET.
+`examples/http_parse.qn` builds and parses offline (no network); `examples/http_get.qn` makes a live GET.

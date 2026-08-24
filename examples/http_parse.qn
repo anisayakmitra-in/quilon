@@ -24,6 +24,17 @@
   assert(postWire.contains("Content-Length: 8\r\n"))
   assert(postWire.contains("\r\n\r\nname=ada"))
 
+  ~ QUERY is a body-bearing method: the request line reads QUERY and, like POST, the body
+  ~ is sent with its Content-Length. Its Accept-Query reply header reads back via `header`.
+  queryWire :: Text = requestText(Request {
+    method = Query(Body { content = "{\"q\":\"ada\"}", contentType = "application/json" }),
+    url = "http://example.com/search"
+  })
+  assert(queryWire.contains("QUERY /search HTTP/1.0\r\n"))
+  assert(queryWire.contains("Content-Type: application/json\r\n"))
+  assert(queryWire.contains("Content-Length: 11\r\n"))
+  assert(queryWire.contains("\r\n\r\n{\"q\":\"ada\"}"))
+
   ~ Parse a canned response, then read its fields on access.
   canned :: Text = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 5\r\n\r\nhello"
   response :: Response = parseResponse(canned) ?
