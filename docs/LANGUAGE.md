@@ -856,7 +856,7 @@ The type checker verifies matches are exhaustive (use `_` to cover the rest). (S
 
 >> add = (a, b) => a + b   ~ `>>` exports an item; unmarked items are file-private
 ```
-- The built-in modules are `core.io`, `core.test`, `core.cli`, `core.time`, and `core.net`; their members are real functions. See the [corelib](#corelib) index for each module's API reference.
+- The built-in modules are `core.io`, `core.test`, `core.cli`, `core.time`, `core.net`, and `core.http`; their members are real functions. See the [corelib](#corelib) index for each module's API reference.
 - `Text` and the operators are built-ins and need **no** import.
 - A module exposes only its `>>`-exported items.
 
@@ -877,6 +877,7 @@ signatures, behavior, and a small example per function.
 | [`core.cli`](corelib/cli.md) | `<< core.cli` | Pipe-friendly helpers over the entry point's `args` / `env`: `getEnv` / `hasFlag` / `getOpt`. |
 | [`core.time`](corelib/time.md) | `<< core.time` | Time primitives: the `@sleep` pause and the monotonic `now()` clock. |
 | [`core.net`](corelib/net.md) | `<< core.net` | Networking: the deferred `@tcpRequest` raw TCP request exchange the HTTP client sits on. |
+| [`core.http`](corelib/http.md) | `<< core.http` | A minimal HTTP client (over `core.net`): `Method` / `Request` / `Response`, request building and response parsing, and `send` / `get`. |
 
 `Text` and the operators are built-ins and need **no** import. The [concurrency model](#concurrency--colorless-implicit-futures--in-progress) that governs the `@` leaf primitives (`@readStdin`, `@sleep`) is language semantics — see that section.
 
@@ -1214,7 +1215,8 @@ pathological input.
 | Sum-type payload is a named **record** (`Method = Get / Post(Body)`; match binds it, reads its fields / calls its methods) | ✅ |
 | Concrete `Result` payloads: a bound `Ok`/`NotOk` payload is usable at its real type (overload dispatch, across `-> Result` fn boundaries) | ✅ |
 | Uniform `Result` layout: a `Result` of ANY payload (`Num`/`Text`/`[]Text`/composite) passes through a generic `(r :: Result)` param/return — powers `assertOk`/`assertNotOk` on `getEnv`/`getOpt` | ✅ |
-| Modules: `<< core.io`, `<< core.test`, `<< core.cli`, `<< core.time`, `<< core.net`, file-path imports, `>>` exports | ✅ |
+| Modules: `<< core.io`, `<< core.test`, `<< core.cli`, `<< core.time`, `<< core.net`, `<< core.http`, file-path imports, `>>` exports | ✅ |
+| HTTP client: `<< core.http` (`Method` / `Request` / `Response`, request building + response parsing, `send` / `get` over `core.net`; HTTP only, no TLS) | ✅ |
 | I/O: `print` / `eprint` / `write` | ✅ |
 | I/O: `@readStdin` — deferred stdin line read, forced on use | ✅ |
 | Assertions: `<< core.test` (`assert` (+ `AssertOpts` message) / `assertEq` / `assertNotEq` / `assertOk` / `assertNotOk` / `failAt`; fail → exit 101) | ✅ |

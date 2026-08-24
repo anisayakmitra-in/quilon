@@ -197,3 +197,40 @@ fn binding_and_wildcard_payload_patterns_still_accepted() {
         3,
     );
 }
+
+#[test]
+fn record_field_typed_as_user_sum() {
+    // A record field annotated as a user SUM type carries the sum: construct the
+    // record with a variant value, read the field back, and dispatch on it.
+    // Post is the second variant (POST -> exit 2).
+    assert_exit(
+        "Method = Get / Post\n\
+         Request = { method :: Method, tag :: Num }\n\
+         verb = (m :: Method) -> Num => m ? | Get => 1 | Post => 2\n\
+         ^ = () -> Num => <\n\
+           request = Request { method = Post, tag = 9 }\n\
+           verb(request.method)\n\
+         >",
+        2,
+    );
+}
+
+#[test]
+fn bound_result_with_record_payload_matched() {
+    // A `Result` carrying a RECORD payload, bound to a `:: Result` variable and then
+    // matched extracting the record — the binding must keep the concrete payload type
+    // so the match unpacks the record (a pointer), not the numeric fallback.
+    // Point { x = 3, y = 4 } -> x + y = 7.
+    assert_exit(
+        "Point = { x :: Num, y :: Num }\n\
+         wrap = (p :: Point) -> Result => Ok(p)\n\
+         ^ = () -> Num => <\n\
+           boxed :: Result = wrap(Point { x = 3, y = 4 })\n\
+           got :: Point = boxed ?\n\
+             | Ok(inner) => inner\n\
+             | NotOk(_)  => Point { x = 0, y = 0 }\n\
+           got.x + got.y\n\
+         >",
+        7,
+    );
+}

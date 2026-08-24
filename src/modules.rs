@@ -143,8 +143,7 @@ const CORE_HTTP: &str = include_str!("../corelib/http.qn");
 
 /// Every bundled corelib source — the ONE trusted origin allowed to declare `@` leaf IO
 /// primitives.
-const CORELIB_SOURCES: &[&str] =
-    &[CORE_IO, CORE_TEST, CORE_CLI, CORE_TIME, CORE_NET, CORE_HTTP];
+const CORELIB_SOURCES: &[&str] = &[CORE_IO, CORE_TEST, CORE_CLI, CORE_TIME, CORE_NET, CORE_HTTP];
 
 /// Map a built-in dotted module name to its bundled source.
 fn builtin_source(name: &str) -> Option<&'static str> {
