@@ -120,6 +120,10 @@ impl<'ctx> CodeGenerator<'ctx> {
 
             Expr::Array { elements, .. } => self.generate_array(expr, elements),
 
+            Expr::MapLiteral { entries, .. } => self.generate_map_literal(expr, entries),
+
+            Expr::SetLiteral { elements, .. } => self.generate_set_literal(expr, elements),
+
             Expr::Record { fields, .. } => self.generate_record_expr(expr, fields),
 
             // A bare spread never survives to codegen on its own — the parser only
@@ -272,6 +276,18 @@ impl<'ctx> CodeGenerator<'ctx> {
                 || matches!(self.oracle.expr_type(right), Some(Type::Array(_))))
         {
             return self.generate_array_concat(left, right);
+        }
+
+        // Set algebra: `+` union, `-` difference, `+-`/`-+` intersection — each builds a
+        // NEW set. Distinguished from numeric `+`/`-` by the oracle type; `SetIntersect`
+        // (`+-`/`-+`) is only ever a set operator. Routed BEFORE eager operand evaluation
+        // so a set operand isn't mistaken for a Num.
+        if op == BinOp::SetIntersect
+            || (matches!(op, BinOp::Add | BinOp::Sub)
+                && (matches!(self.oracle.expr_type(left), Some(Type::Set(_)))
+                    || matches!(self.oracle.expr_type(right), Some(Type::Set(_)))))
+        {
+            return self.generate_set_op(op, left, right);
         }
 
         // `&&`/`||` are SHORT-CIRCUIT (docs/LANGUAGE.md "Logical: `&& || !` (short-circuit)"):
@@ -648,6 +664,8 @@ impl<'ctx> CodeGenerator<'ctx> {
     /// Lower an array index `array[index]`. `index_node` is the whole `Expr::Index`
     /// (used to look up the element type in the oracle — the checker records an index
     /// expression's type as its element type); `array` and `index_expr` are its parts.
+    /// Only arrays are indexable; the checker rejects `map[key]` (maps are read via
+    /// `.get`), so a map value never reaches here.
     pub(super) fn generate_index(
         &mut self,
         index_node: &Expr,

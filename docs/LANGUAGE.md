@@ -41,6 +41,8 @@ Quilon's identity, and the rules that guide its design:
 | `<-` (prefix) | Spread inside a `[ ]` / `{ }` literal ([rule](#spread-in-literals)) | `[<-xs, 4]` · `{<-p, x = 9}` · `Vec {<-p, x = 9}` |
 | `?` `\|` `_` | Pattern match | `v ? \| 0 => "zero" \| _ => "other"` |
 | `/` | Division **or** sum-type variant separator | `a / b` · `Color = Red / Green` |
+| `[\| \|]` | [Map](#maps) / [Set](#sets) pipe fence (`=>` = "maps to") | `[\|"a" => 1\|]` (map) · `[\|1, 2\|]` (set) |
+| `+-` `-+` | [Set intersection](#sets) (one symmetric operator) | `a +- b` ≡ `a -+ b` |
 | `` ` `` (in a string) | [Interpolation](#string-interpolation-and-the-render-operator) hole · `` `` `` = one literal backtick | `` "hi `user.name`" `` |
 | `` ` `` (as a name) | The overloadable **render** operator — a type's `Text` rendering | `` ` = () -> Text => "..." `` |
 | `? :` | Ternary | `x < 0 ? -x : x` |
@@ -286,6 +288,21 @@ element `T`), so even nested arrays disambiguate cleanly: `[][]Num + []Num` is a
 **concat**. `[]T + []T` is the same as the spread `[<-a, <-b]` and shares its element-copy
 lowering, so it is element-repr-correct for `[]Num`, `[]Text`, and nested arrays alike.
 (See `examples/array_concat.ql`.)
+
+### Maps
+
+A `Map` is a **built-in parametric collection** — like `[]T`, not a user-defined generic —
+written with a **pipe fence** `[|K => V|]` (`=>` reads "maps to"). It is immutable, keyed by
+`Num`/`Text`/`Bool`, and read through `.get` (which returns a `Result` — there is no bracket
+indexing on a map). Full reference: [`docs/collections/map.md`](collections/map.md) (and `examples/maps.ql`).
+
+### Sets
+
+A `Set` is a **built-in parametric collection** — like `[]T`, not a user-defined generic —
+written with the same **pipe fence** `[|T|]` (which keeps a set literal distinct from an array).
+It is immutable, holds unique `Num`/`Text`/`Bool` elements, and supports set algebra
+(`+` union, `-` difference, `+-`/`-+` intersection). Full reference:
+[`docs/collections/set.md`](collections/set.md) (and `examples/sets.ql`).
 
 ### Records
 Anonymous structs with named fields:
@@ -1191,6 +1208,9 @@ pathological input.
 | Arrays: literals, `.size`, `[index]` | ✅ |
 | Array methods: `map`/`filter`/`reduce`/`each`/`find`/`at` (chainable; lambda args inlined) | ✅ |
 | Array `+`: concat `[]T + []T`, append `[]T + T`, prepend `T + []T` → new `[]T` (non-mutating) | ✅ |
+| Maps `[\|K => V\|]`: literals, `.size`, `get` (safe, `Result`; no bracket indexing)/`has`/`set`/`keys`/`values`/`each`; keys Num/Text/Bool; immutable | ✅ |
+| Sets `[\|T\|]`: literals, `.size`, `has`/`add`/`items`/`each`, algebra `+`/`-`/`+-` (union/difference/intersection); immutable | ✅ |
+| Map/Set removal, and user-defined key types (via a `%` hash hook) | ❌ |
 | Records + field access | ✅ |
 | Named record types + methods (`it`) | ✅ |
 | In-place mutation of `:=` records: field writes (`obj.f := v`) + setter methods | ✅ |
