@@ -30,16 +30,15 @@
   payload = (method :: Method) -> Body => method ?
     | Post(carried) => carried
     | Put(carried)  => carried
-    | Get           => Body { content = "", contentType = "" }
-    | Delete        => Body { content = "", contentType = "" }
-    | Head          => Body { content = "", contentType = "" }
+    | _             => Body { content = "", contentType = "" }
   afterScheme = request.url.indexOf("://") ?
     | Ok(mark) => request.url.slice(mark + 3, request.url.length)
     | NotOk(_) => request.url
-  authority = afterScheme.indexOf("/") ?
+  slashAt = afterScheme.indexOf("/")
+  authority = slashAt ?
     | Ok(mark) => afterScheme.slice(0, mark)
     | NotOk(_) => afterScheme
-  path = afterScheme.indexOf("/") ?
+  path = slashAt ?
     | Ok(mark) => afterScheme.slice(mark, afterScheme.length)
     | NotOk(_) => "/"
   body = payload(request.method)
