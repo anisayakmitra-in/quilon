@@ -42,7 +42,7 @@ when an accessor reads them.
 >
 ```
 
-A `send` on the current `@tcpRequest` succeeds or fails loudly at the socket; once
-`@tcpRequest` reports transport failures as a `Result`, `send` propagates them as
-`NotOk(error)`. `examples/http_parse.ql` exercises the offline half (building requests,
-parsing responses) with no network; `examples/http_get.ql` makes a live GET.
+`send` propagates a transport failure from `@tcpRequest` as `NotOk(error)`, so a network
+error never crashes the program — match the `Result` to handle it. `examples/http_parse.ql`
+exercises the offline half (building requests, parsing responses) with no network;
+`examples/http_get.ql` makes a live GET.

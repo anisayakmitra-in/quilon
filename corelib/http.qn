@@ -97,7 +97,9 @@
     | Ok(mark) => afterScheme.slice(0, mark)
     | NotOk(_) => afterScheme
   address = authority.contains(":") ? authority : authority + ":80"
-  parseResponse(@tcpRequest(address, requestText(request)))
+  @tcpRequest(address, requestText(request)) ?
+    | Ok(responseBytes) => parseResponse(responseBytes)
+    | NotOk(problem)    => NotOk(problem)
 >
 
 ~ Fetch a URL with a GET request: `Ok(Response)` / `NotOk(error)`.
