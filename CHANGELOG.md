@@ -6,6 +6,34 @@ All notable changes to Quilon are documented here.
 
 ### Added
 
+- **Fail-loud runtime failures say where they happened
+  ([#153](https://github.com/assapir/quilon/issues/153)).** A checked `arr[i]` that is out
+  of bounds, negative, or NaN, and a violated `Text.replace` / `replaceAll` / `repeat`
+  contract, now report the *expression that broke the contract* — a `file:line:column:`
+  position line, the message on the line under it, then the source line and a caret run —
+  instead of a bare stderr line:
+
+  ```text
+  demo.ql:4:11:
+  index 7 out of bounds for an array of size 3
+     |
+   4 |   value = items[wanted]
+     |           ^^^^^^^^^^^^^
+  ```
+
+  Same frame as a compile error and a failing assertion — one shape now covers every located
+  failure a program can produce, and all three shorten a path too long for the position line
+  from its START (`…/deep/module.ql:4:11:`) so the file name stays visible and the line does
+  not wrap — and a program with several array reads no longer leaves you
+  hunting for which one it was. Exit codes are unchanged (`1` for a bad index, `101` for a
+  `Text` contract), and a redirected report stays plain. The location is compiled in — each
+  fallible intrinsic takes the read's `Site` constant — so a native build reports exactly
+  what `quilon run` does, with no debug info and no unwinder. `tests/fail_loud_location_test.rs`
+  pins compile errors, assertions, and runtime checks to the same framing, since the
+  assertion renderer lives in Quilon (`corelib/test.ql`) and the runtime one in Rust
+  (`quilon-rt`'s `report`). `examples/array_methods.ql` shows the non-aborting alternative:
+  `at(n)` hands an out-of-range index back as `NotOk` instead of stopping the program.
+
 - **Deferred values — the `@readStdin` leaf IO primitive ([#120](https://github.com/assapir/quilon/issues/120)).**
   The value-returning half of the colorless implicit-futures model. `@readStdin()` (in
   `core.io`) reads one line from stdin and returns a **deferred** `Text`: calling it
@@ -31,10 +59,12 @@ All notable changes to Quilon are documented here.
 - **Failing assertions say where they failed, and a general call-site facility to build
   that on ([#65](https://github.com/assapir/quilon/issues/65)).** A failing `core.test`
   assertion now reports in the shape of a compiler error — the failing call's own
-  `file:line:column`, the message, the source line, and a caret run under the call:
+  `file:line:column:`, the message on the line under it, then the source line and a caret
+  run under the call:
 
   ```text
-  demo.ql:12:3: assertion failed: expected 42, got 41
+  demo.ql:12:3:
+  assertion failed: expected 42, got 41
      |
   12 |   assertEq(answer(), 42)
      |   ^^^^^^^^^^^^^^^^^^^^^^
@@ -60,8 +90,7 @@ All notable changes to Quilon are documented here.
   and no debug info to keep, and `quilon run` (JIT) and native builds report identically. A
   `Site` parameter that nothing could fill in — before another parameter, or on a lambda, a
   nested declaration, or a record method — is a compile error rather than a silent demand
-  for an explicit location. See `examples/call_site.ql`, and `examples/assert_location.ql`, which
-  fails on purpose to show the report.
+  for an explicit location. See `examples/call_site.ql`.
 
   Supporting surface, all documented: `core.test`'s **`failAt(message)`** (the reporting
   primitive the assertions are built from, and what a custom assertion of your own
@@ -130,6 +159,26 @@ All notable changes to Quilon are documented here.
   (#101)
 
 ### Changed
+
+- **Every located report puts the message on its own line, and shortens a long path.**
+  Since 0.9.1 a compile error read `path:line:col: error: <message>` on one line; it — and
+  the assertion and fail-loud runtime reports added in this release — now print the position
+  and the message separately:
+
+  ```text
+  demo.ql:2:7:
+  error: No overload of '+' matches argument types (Num, Bool)
+    |
+  2 |   x = 1 + true
+    |       ^^^^^^^^
+  ```
+
+  "Where" and "what" are different questions, and a long message no longer pushes the
+  position off the right edge. A path wider than 60 characters is shown from its END behind a
+  `…` (`…/scratch/demo/bounds.ql:7:11:`), so the file name stays visible instead of the line
+  wrapping — absolute paths and temp directories made that routine. **Anything parsing
+  compiler output for `: error: ` on the position line needs updating**; the position line
+  now ends at the colon.
 
 - **A function nothing can reach from `^` is no longer emitted, so importing a
   library costs only what you use from it.** `<< core.test` brought in every

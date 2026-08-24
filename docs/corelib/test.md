@@ -13,7 +13,8 @@ A failure says **where** it failed, in the same shape as a compiler
 [error](../LANGUAGE.md#error-messages) — position, message, source line, caret run:
 
 ```text
-demo.ql:12:3: assertion failed: expected 42, got 41
+demo.ql:12:3:
+assertion failed: expected 42, got 41
    |
 12 |   assertEq(answer(), 42)
    |   ^^^^^^^^^^^^^^^^^^^^^^
@@ -56,6 +57,4 @@ rendered — `Num`/`Text`/`Bool` directly, and records, sum types, and arrays th
 `` ` `` render operator. The whole module is pure Quilon (`corelib/test.ql`): the report is
 composed and printed in-language from the `Site` fields, built on `assert`, `==`/`!=`,
 pattern matching, and `Text.repeat` for the caret run — its only native primitives are the
-internal process-exit and terminal-detection intrinsics. (See
-`examples/assert_demo.ql`, and `examples/assert_location.ql`, which fails on purpose to
-show the report.)
+internal process-exit and terminal-detection intrinsics. (See `examples/assert_demo.ql`.)
