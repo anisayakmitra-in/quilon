@@ -1,0 +1,105 @@
+~ core.http — a minimal HTTP client built entirely on core.net's @tcpRequest.
+~ Import with `<< core.http`. Reference: docs/corelib/http.md.
+~
+~ HTTP only (no TLS). Each request opens one connection, sends `Connection: close`,
+~ and reads the close-delimited response. `Request` and `Response` are rich-but-lazy:
+~ they hold the raw data and parse fields when an accessor reads them.
+
+<< core.net
+
+~ A request body: the bytes to send and the media type to advertise.
+>> Body = { content :: Text, contentType :: Text }
+
+~ The HTTP method. Body-bearing methods carry a `Body`; the rest are nullary.
+>> Method = Get / Post(Body) / Put(Body) / Delete / Head
+
+~ A request: the method and the target URL (`http://host[:port]/path`, scheme optional).
+>> Request = { method :: Method, url :: Text }
+
+~ A response: the raw response bytes. Read fields with `status` / `header` / `body`.
+>> Response = { raw :: Text }
+
+~ Serialise a `Request` into the raw HTTP/1.0 request bytes sent over the wire.
+>> requestText = (request :: Request) -> Text => <
+  verb = (method :: Method) -> Text => method ?
+    | Get     => "GET"
+    | Post(_) => "POST"
+    | Put(_)  => "PUT"
+    | Delete  => "DELETE"
+    | Head    => "HEAD"
+  payload = (method :: Method) -> Body => method ?
+    | Post(carried) => carried
+    | Put(carried)  => carried
+    | Get           => Body { content = "", contentType = "" }
+    | Delete        => Body { content = "", contentType = "" }
+    | Head          => Body { content = "", contentType = "" }
+  afterScheme = request.url.indexOf("://") ?
+    | Ok(mark) => request.url.slice(mark + 3, request.url.length)
+    | NotOk(_) => request.url
+  authority = afterScheme.indexOf("/") ?
+    | Ok(mark) => afterScheme.slice(0, mark)
+    | NotOk(_) => afterScheme
+  path = afterScheme.indexOf("/") ?
+    | Ok(mark) => afterScheme.slice(mark, afterScheme.length)
+    | NotOk(_) => "/"
+  body = payload(request.method)
+  head = "`verb(request.method)` `path` HTTP/1.0\r\nHost: `authority`\r\nConnection: close\r\n"
+  bodyHeaders = body.content.size > 0
+    ? "Content-Type: `body.contentType`\r\nContent-Length: `body.content.size`\r\n"
+    : ""
+  head + bodyHeaders + "\r\n" + body.content
+>
+
+~ Wrap raw response bytes as a `Response`, validating the status line is present.
+>> parseResponse = (raw :: Text) -> Result =>
+  raw.slice(0, 4) == "HTTP" && raw.contains("\r\n")
+    ? Ok(Response { raw = raw })
+    : NotOk("malformed HTTP response")
+
+~ The numeric status code from the response status line (`HTTP/1.0 200 OK` -> 200).
+>> status = (response :: Response) -> Num => <
+  digitOf = (grapheme :: Text) -> Result => "0123456789".indexOf(grapheme)
+  statusLine = response.raw.split("\r\n")[0]
+  fields = statusLine.split(" ")
+  code = fields.size > 1 ? fields[1] : ""
+  code.split("").reduce(0, (accumulator, grapheme) => digitOf(grapheme) ?
+    | Ok(digit) => accumulator * 10 + digit
+    | NotOk(_)  => accumulator)
+>
+
+~ Look up a response header by name (case-insensitive): `Ok(value)` or `NotOk(name)`.
+>> header = (response :: Response, name :: Text) -> Result => <
+  wanted = name.toLower()
+  matchHeader = (line :: Text) -> Result => line.indexOf(":") ?
+    | Ok(colon) => line.slice(0, colon).trim().toLower() == wanted
+        ? Ok(line.slice(colon + 1, line.length).trim())
+        : NotOk(name)
+    | NotOk(_)  => NotOk(name)
+  headSection = response.raw.split("\r\n\r\n")[0]
+  headSection.split("\r\n").find(line => matchHeader(line) ? | Ok(_) => true | NotOk(_) => false) ?
+    | Ok(line) => matchHeader(line)
+    | NotOk(_) => NotOk(name)
+>
+
+~ The response body: everything after the blank line separating headers from body.
+>> body = (response :: Response) -> Text => <
+  separator = "\r\n\r\n"
+  response.raw.indexOf(separator) ?
+    | Ok(mark) => response.raw.slice(mark + separator.length, response.raw.length)
+    | NotOk(_) => ""
+>
+
+~ Perform `request` over core.net and parse the reply into `Ok(Response)` / `NotOk(error)`.
+>> send = (request :: Request) -> Result => <
+  afterScheme = request.url.indexOf("://") ?
+    | Ok(mark) => request.url.slice(mark + 3, request.url.length)
+    | NotOk(_) => request.url
+  authority = afterScheme.indexOf("/") ?
+    | Ok(mark) => afterScheme.slice(0, mark)
+    | NotOk(_) => afterScheme
+  address = authority.contains(":") ? authority : authority + ":80"
+  parseResponse(@tcpRequest(address, requestText(request)))
+>
+
+~ Fetch a URL with a GET request: `Ok(Response)` / `NotOk(error)`.
+>> get = (url :: Text) -> Result => send(Request { method = Get, url = url })

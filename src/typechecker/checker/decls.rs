@@ -294,8 +294,17 @@ impl TypeChecker {
                 self.infer_setter_methods(&declaration.name, methods);
 
                 // The declaration itself, built once: every method's `it` binding and the
-                // registered type are the same record, so they share one copy of it.
-                let record_fields = Rc::new(fields.clone());
+                // registered type are the same record, so they share one copy of it. Each
+                // field's annotation is resolved (like a parameter's) so a field typed as a
+                // user sum or record carries its real definition, not an empty placeholder.
+                let record_fields = Rc::new(
+                    fields
+                        .iter()
+                        .map(|(field_name, field_type)| {
+                            (field_name.clone(), self.resolve_type(field_type))
+                        })
+                        .collect::<Vec<_>>(),
+                );
                 let method_names: Rc<Vec<String>> =
                     Rc::new(methods.iter().map(|m| m.name.clone()).collect());
                 Type::Named {
@@ -564,7 +573,19 @@ impl TypeChecker {
         let final_type = if let Some(ref annotated_type) = declaration.type_annotation {
             let annotated_type = self.resolve_type(annotated_type);
             self.check_type_compatibility(&annotated_type, &value_type, &declaration.span)?;
-            annotated_type
+            // A sum annotation (e.g. the generic `Result`) is satisfied by a more concrete
+            // value of the same sum (`Ok(SomeRecord)`); keep the inferred type so its
+            // specialized payloads survive the binding. Without this a later match on the
+            // binding would unpack an aggregate payload at the generic fallback type.
+            let specializes_sum = matches!(
+                (&annotated_type, &value_type),
+                (Type::Sum { name: a, .. }, Type::Sum { name: b, .. }) if a == b
+            );
+            if specializes_sum {
+                value_type
+            } else {
+                annotated_type
+            }
         } else {
             value_type
         };

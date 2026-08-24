@@ -1,0 +1,45 @@
+~ The `core.http` client's offline half: building request bytes and parsing a response,
+~ both operating on plain `Text` so they need no network. A GET and a POST request are
+~ serialised and checked field by field, then a canned response is parsed and its status
+~ line, a header, and the body are read back. `<< core.test` verifies every result; on
+~ success the program exits 0. See examples/http_get.qn for a live request.
+<< core.http
+<< core.test
+
+^ = () -> $ => <
+  ~ A GET request serialises to a request line, a Host header, and Connection: close.
+  getWire :: Text = requestText(Request { method = Get, url = "http://example.com/index.html" })
+  assert(getWire.contains("GET /index.html HTTP/1.0\r\n"))
+  assert(getWire.contains("Host: example.com\r\n"))
+  assert(getWire.contains("Connection: close\r\n"))
+
+  ~ A POST carries its body: the Body payload adds Content-Type / Content-Length and the
+  ~ content after the blank line. A URL with no path defaults the request target to "/".
+  postWire :: Text = requestText(Request {
+    method = Post(Body { content = "name=ada", contentType = "application/x-www-form-urlencoded" }),
+    url = "example.com"
+  })
+  assert(postWire.contains("POST / HTTP/1.0\r\n"))
+  assert(postWire.contains("Content-Type: application/x-www-form-urlencoded\r\n"))
+  assert(postWire.contains("Content-Length: 8\r\n"))
+  assert(postWire.contains("\r\n\r\nname=ada"))
+
+  ~ Parse a canned response, then read its fields on access.
+  canned :: Text = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 5\r\n\r\nhello"
+  response :: Response = parseResponse(canned) ?
+    | Ok(parsed) => parsed
+    | NotOk(_)   => Response { raw = "" }
+  assertOk(parseResponse(canned))
+  assertEq(status(response), 200)
+  assertEq(body(response), "hello")
+
+  ~ Header lookup is case-insensitive and returns Ok(value) / NotOk.
+  contentType :: Text = header(response, "content-type") ?
+    | Ok(value) => value
+    | NotOk(_)  => "?"
+  assertEq(contentType, "text/html")
+  assertNotOk(header(response, "X-Absent"))
+
+  ~ A reply without a status line is rejected.
+  assertNotOk(parseResponse("not http at all"))
+>
