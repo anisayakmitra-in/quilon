@@ -31,7 +31,7 @@ Quilon's identity, and the rules that guide its design:
 | `::` | Type annotation | `x :: Num` |
 | `=>` | Function body / match arm | `f = x => x + 1` |
 | `->` | Return type | `f = x -> Num => x` |
-| `+` `-` `*` `/` `%` | [Arithmetic](#expressions) (`-x` negates) · `+` also concatenates `Text` and arrays | `a + b` · `x % 2` |
+| `+` `-` `*` `/` `%` | [Arithmetic](#expressions) (`-x` negates) | `a + b` · `x % 2` |
 | `==` `!=` `<` `<=` `>` `>=` | [Comparison](#expressions) → `Bool` · `==`/`!=` over `Num`/`Text`/`Bool`, ordering over `Num`/`Text` | `a == b` · `x <= 3` |
 | `&&` `\|\|` `!` | Logical and / or / not (short-circuit) | `a && !b` |
 | `< >` | Block delimiters · also `<`/`>` comparison ([rule](#expressions)) | `< a b a + b >` · `a < b` · `a > b` |
@@ -706,12 +706,12 @@ result = <
 ```
 
 ### Operator precedence
-Loosest binding first; every level is **left-associative** except `<-`, which is
+Least-priority level first; every level is **left-associative** except `<-`, which is
 non-associative (`1 <- 2 <- 3` is a parse error).
 
 | | Operators |
 |---|---|
-| loosest | `:=` (reassignment) |
+| less priority | `:=` (reassignment) |
 | | `? :` ternary · `?` `\|` match |
 | | `\|\|` |
 | | `&&` |
@@ -722,7 +722,7 @@ non-associative (`1 <- 2 <- 3` is a parse error).
 | | `+` `-` |
 | | `*` `/` `%` `+-` |
 | | `-x` `!x` (prefix) |
-| tightest | `.field` · `.method(…)` · `f(…)` · `xs[i]` |
+| more priority | `.field` · `.method(…)` · `f(…)` · `xs[i]` |
 
 So `2 + 3 |> double` is `double(5)`, `1 <- 2 + 2` is `1 <- 4`, and `1 < 2 == true` is
 `(1 < 2) == true`. Parenthesize anything else.
