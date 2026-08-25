@@ -1,6 +1,6 @@
 # Quilon Language Reference
 
-**Version:** 0.9.1 (stable basics — the core is solid and verified end-to-end, but the language is **not** yet feature-complete; see [Known limitations](#known-limitations)).
+**Version:** 0.9.2 — "Hegemon" (stable basics — the core is solid and verified end-to-end, but the language is **not** yet feature-complete; see [Known limitations](#known-limitations)).
 
 Quilon is a statically-typed, **symbol-based** language (no control-flow keywords) that compiles to native code via LLVM. Every example below has a passing end-to-end test: each `examples/*.qn` program is **self-asserting** — it verifies its own results in-language with `<< core.test` and exits 0 (a failing assertion aborts with exit 101), under both the JIT (`quilon run`) and native AOT.
 
@@ -31,6 +31,9 @@ Quilon's identity, and the rules that guide its design:
 | `::` | Type annotation | `x :: Num` |
 | `=>` | Function body / match arm | `f = x => x + 1` |
 | `->` | Return type | `f = x -> Num => x` |
+| `+` `-` `*` `/` `%` | [Arithmetic](#expressions) (`-x` negates) | `a + b` · `x % 2` |
+| `==` `!=` `<` `<=` `>` `>=` | [Comparison](#expressions) → `Bool` · `==`/`!=` over `Num`/`Text`/`Bool`, ordering over `Num`/`Text` | `a == b` · `x <= 3` |
+| `&&` `\|\|` `!` | Logical and / or / not (short-circuit) | `a && !b` |
 | `< >` | Block delimiters · also `<`/`>` comparison ([rule](#expressions)) | `< a b a + b >` · `a < b` · `a > b` |
 | `^` | Entry point (main) | `^ = () -> Num => 0` |
 | `$` | Unit type **and** its sole value | `f = () -> $ => $` |
@@ -653,7 +656,7 @@ argument types that come out of an array element, a match, a call, or a lambda.)
 ## Expressions
 
 - **Arithmetic:** `+ - * / %` (and `-x`). `+` is an [overload set](#overloading): `Num + Num` adds, `Text + Text` concatenates, and on arrays it concatenates / appends / prepends (`[]T + []T`, `[]T + T`, `T + []T`, all yielding a new `[]T` — see [Array concatenation](#array-concatenation--)). `%` is the f64 remainder and works on fractional operands too (`7.5 % 2` → `1.5`); the result takes the **dividend's** sign (`-7 % 3` → `-1`, `7 % -3` → `1`), like C `fmod` / Rust `%`.
-- **Comparison:** `== != < <= > >=`. Over `Num` and (lexicographically) `Text`; all return `Bool`. Each is a [user-overloadable operator](#operator-overloading).
+- **Comparison:** `== != < <= > >=`; all return `Bool`. Equality (`==`/`!=`) is over `Num`, `Text` and `Bool`; ordering (`< <= > >=`) is over `Num` and (lexicographically) `Text`. Each is a [user-overloadable operator](#operator-overloading), and comparing two different types is a no-matching-overload error — there is no coercion.
 - **Logical:** `&& || !` (short-circuit).
 
 > **`<` and `>` vs. `< >` blocks.** `<` and `>` double as the block delimiters. A `<`
@@ -701,6 +704,28 @@ result = <
   x + y          ~ result is 30
 >
 ```
+
+### Operator precedence
+Least-priority level first; every level is **left-associative** except `<-`, which is
+non-associative (`1 <- 2 <- 3` is a parse error).
+
+| | Operators |
+|---|---|
+| less priority | `:=` (reassignment) |
+| | `? :` ternary · `?` `\|` match |
+| | `\|\|` |
+| | `&&` |
+| | `==` `!=` |
+| | `<` `<=` `>` `>=` |
+| | `<-` (range) |
+| | `\|>` (pipe) |
+| | `+` `-` |
+| | `*` `/` `%` `+-` |
+| | `-x` `!x` (prefix) |
+| more priority | `.field` · `.method(…)` · `f(…)` · `xs[i]` |
+
+So `2 + 3 |> double` is `double(5)`, `1 <- 2 + 2` is `1 <- 4`, and `1 < 2 == true` is
+`(1 < 2) == true`. Parenthesize anything else.
 
 ### Pipe — `|>`
 `|>` feeds its left operand in as the **first argument** of the right-hand call:
