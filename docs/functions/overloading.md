@@ -25,8 +25,10 @@ error: No overload of 'score' matches argument types (Bool). Candidates: (Num), 
   g = (n :: Num) => 1        ~ error: overload member 'g' (Num) has no return type
   g = (t :: Text) -> Num => 2
   ```
-- A single ordinary `name = …` definition is **not** an overload set: it keeps full
-  inference (unannotated parameters default to `Num`, return type inferred).
+- A single ordinary `name = …` definition is **not** an overload set. It keeps its
+  inferred return type — no return annotation needed. Its parameters are still annotated;
+  only an unannotated **method** parameter defaults to `Num` (see
+  [named record types](../types/records.md#named-record-types-with-methods)).
 - **The compiler's own definitions are members, not reserved names.** The built-in
   operators, and the corelib functions the compiler provides (`print`/`eprint`, `write`,
   `now`), are members of their sets like any other. Defining one of those names with a
