@@ -1,0 +1,56 @@
+# Closures and tail recursion
+
+## Tail self-recursion is optimized to a loop (guaranteed)
+
+When a function returns a call **to itself in tail position** — i.e. the self-call is
+the function's whole result, with nothing left to do to it — the compiler **guarantees**
+it is lowered to a loop (the parameters become loop-carried slots and the call becomes a
+back-edge jump) instead of a stack-pushing call. So a tail-recursive function runs in
+**constant stack** and will not overflow, however deep the recursion:
+```quilon
+count = (n :: Num, acc :: Num) -> Num =>
+  n == 0 ? acc : count(n - 1, acc + n)   ~ the self-call IS the `:` branch → tail position
+```
+Tail position flows through the constructs that yield a value directly: `?`/`|` match
+arms, `if`/ternary branches, the tail of a `< >` block, and a `|>` pipeline. A self-call
+**not** in tail position (e.g. `n * fact(n - 1)`, whose result is multiplied first) stays
+ordinary recursion, as does a tail call to a *different* function (general/mutual tail
+calls are a later follow-up). This is codegen-only — there is no surface syntax for it.
+(See `examples/tail_recursion.qn`, which recurses 1,000,000 deep.)
+
+## Closures — capture by `=` (value) vs `:=` (reference)
+
+A function written **inside** another function's body is a **closure**: it can read the
+enclosing locals it refers to. How each name is captured is decided by **the operator that
+bound it** — no capture list, no marker, mirroring the mutability rule for
+[variables](../variables.md) and [records](../mutation.md):
+
+- **`=`** captures **by value** — a frozen snapshot taken when the closure is created;
+- **`:=`** captures **by reference** — one shared mutable cell. Writes through it, from
+  inside the closure or outside, are visible to everyone sharing it, and the cell survives
+  the frame that created it.
+
+```quilon
+^ = () -> Num => <
+  total := 0                 ~ `:=` -> captured BY REFERENCE
+  bump = n => <
+    total := total + n       ~ writes the SHARED cell; the effect persists across calls
+    total
+  >
+  bump(10)                   ~ total -> 10
+  bump(20)                   ~ total -> 30  (same cell)
+
+  base = 7                   ~ `=`  -> captured BY VALUE (a frozen copy)
+  addBase = x => x + base
+
+  total + addBase(5)         ~ 30 + 12 = 42
+>
+```
+
+A non-capturing nested function may **recurse** (`fact = n => … fact(n-1) …`); nested
+closures may capture from any enclosing frame (the shared `:=` cell is threaded through
+every level), and a closure value may itself be captured by another closure and called.
+
+Closures are **monomorphic**: parameters and captured values are concrete-typed. Capturing a
+polymorphic value, generic closures, and passing or returning a closure across frames are
+deferred — see [Known limitations](../status/limitations.md). (See `examples/closures.qn`.)

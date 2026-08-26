@@ -1,8 +1,8 @@
 # `core.cli` — CLI helpers
 
-Import with `<< core.cli`. See the [corelib index](../LANGUAGE.md#corelib) and `examples/cli.qn`.
+Import with `<< core.cli`. See the [corelib index](README.md) and `examples/cli.qn`.
 
-Thin, pipe-friendly helpers over the [entry point](../LANGUAGE.md#entry-point)'s
+Thin, pipe-friendly helpers over the [entry point](../modules/entry-point.md)'s
 `args :: []Text` and `env :: [|Text => Text|]`. The data is always the **first** parameter, so
 `env |> getEnv("PATH")` and `args |> hasFlag("-v")` read naturally.
 

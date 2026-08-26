@@ -1,6 +1,6 @@
 # `Map` — keyed collection
 
-A built-in, no-import type. See the [Language reference](../LANGUAGE.md#maps) and `examples/maps.qn`.
+A built-in, no-import type. See the [Language reference](README.md#maps) and `examples/maps.qn`.
 
 A `Map` is written `[|K => V|]` (`=>` reads "maps to"). `Map` is a **built-in parametric
 collection** — like `[]T`, not a user-defined generic — written with a **pipe fence**
@@ -18,7 +18,7 @@ empty :: [|Num => Num|] = [|=>|]                          ~ empty map
 ## User-defined key types
 
 A record or sum type becomes a key by defining two members (see
-[operator members](../LANGUAGE.md#operators)):
+[operator members](../functions/overloading.md#operator-overloading)):
 
 - a **`%` hash hook** — a unary member `% = () -> Num => …` (`it` is the value) returning a
   `Num` hash;

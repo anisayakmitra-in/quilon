@@ -1,6 +1,6 @@
 # `Set` — unordered unique collection
 
-A built-in, no-import type. See the [Language reference](../LANGUAGE.md#sets) and `examples/sets.qn`.
+A built-in, no-import type. See the [Language reference](README.md#sets) and `examples/sets.qn`.
 
 A `Set` is written `[|T|]`. `Set` is a **built-in parametric collection** — like `[]T`,
 not a user-defined generic — written with the same **pipe fence** `[| … |]`; the fence is
