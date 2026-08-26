@@ -36,7 +36,8 @@ A sum type may carry a trailing `{ }` block of **methods**. The block is optiona
 with no methods is written exactly as above. `it` is the whole sum value, so a method
 typically matches on it. A member is a named method, an
 [operator](../functions/overloading.md#operator-overloading), or the render `` ` ``. The block holds **methods only**
-— a sum has no fields, so a field-like entry there is a compile error.
+— a sum has no fields, so a field-like entry there is a compile error, and its methods are
+always `=` (see [Mutation](../mutation.md)).
 ```quilon
 Shape = Circle(Num) / Rect(Num, Num) {
   area = () -> Num => it ? | Circle(r) => 3 * r * r | Rect(w, h) => w * h
@@ -54,7 +55,7 @@ Result = Ok(...) / NotOk(...)    ~ predefined; `Ok` = success, `NotOk` = failure
 ```
 Use it exactly like any other sum type:
 ```quilon
-classify = v => v ?
+classify = (v :: Result) => v ?
   | Ok(x)    => x * 2
   | NotOk(e) => 0
 ```

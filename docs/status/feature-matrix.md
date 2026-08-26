@@ -30,7 +30,7 @@
 | Spread: prefix `<-` in literals — array splice `[<-xs, 4]`, record update `{<-p, x = 9}` | ✅ |
 | Pattern matching (numbers, wildcard, identifiers, sum-type variants) | ✅ |
 | User-defined sum types (`/` separator), exhaustive matching, payload binding | ✅ |
-| Sum-type methods: optional trailing `{ }` block (named methods, operators, render `` ` ``; `it` = the value); no fields | ✅ |
+| Sum-type methods: optional trailing `{ }` block (named methods, operators, render `` ` ``; `it` = the value); no fields, no `:=` methods | ✅ |
 | `Result` as a normal predefined sum type (`Ok`/`NotOk`) | ✅ |
 | Sum-type payloads: `Num` / `Bool` / `Text` | ✅ |
 | Sum-type payload is a named **record** (`Method = Get / Post(Body)`; match binds it, reads its fields / calls its methods) | ✅ |
@@ -47,8 +47,9 @@
 | `Text` (and nested arrays) in records/arrays, or as a sum-type payload (`Ok(text)`) | ✅ |
 | `^` receives `args :: []Text` (argv) and `env :: [\|Text => Text\|]` (the environment as a Map) | ✅ |
 | Lambdas (`x => …`) as array-method arguments (inlined per element) | ✅ |
+| [Function types](../functions/README.md#function-types--higher-order-functions) (`(Num) -> Bool`, `() -> $`) + higher-order functions: a function-typed parameter called inside, taking a closure by literal or by name | ✅ |
 | Generics / type variables (overloading is the only polymorphism) | ❌ |
-| Overloaded name passed as a value, or a closure as a param / return (higher-order) | ❌ |
+| Overloaded or top-level function name passed as a value; a closure **returned** from a function | ❌ |
 | Generic / polymorphic-capturing closures | ❌ |
 | String interpolation | ❌ |
 | [Colorless implicit-futures concurrency](../concurrency/README.md) — `@` leaf IO primitives, deferred values, force-at-strict-op: the fiber scheduler, the `@sleep` pause, and the value-returning `@readStdin` (deferred `Text`, forced on use) run today; cross-source overlap (networked `@get`) and the multicore runtime are still to come | 🚧 |

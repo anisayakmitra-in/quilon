@@ -333,6 +333,19 @@ impl<'a> Parser<'a> {
                 // requires the following `=`, so this never swallows a stray operator.
                 self.advance();
                 operator
+            } else if let Some(operator) = self.operator_symbol_name()
+                && self.peek_ahead(1).kind == TokenKind::MutAssign
+            {
+                // Caught here so the author gets the rule rather than "expected identifier":
+                // `operator_def_name` only recognizes `op = …`, so `op := …` would otherwise
+                // fall through to the name parser and fail as a stray symbol.
+                return Err(ParseError {
+                    message: format!(
+                        "operator member `{}` cannot be declared with `:=` — an operator yields a value and never mutates `it`",
+                        operator
+                    ),
+                    span: self.peek().span.clone(),
+                });
             } else {
                 self.expect_ident()?
             };
@@ -342,8 +355,20 @@ impl<'a> Parser<'a> {
                 self.advance();
                 let field_type = self.parse_type()?;
                 fields.push((member_name, field_type));
-            } else if self.check(&TokenKind::Assign) {
-                // This is a method: name = parameters => body
+            } else if self.check(&TokenKind::Assign) || self.check(&TokenKind::MutAssign) {
+                // A method: `name = params => body`, or `name := params => body` for one
+                // that may mutate `it`.
+                let mutating = self.check(&TokenKind::MutAssign);
+                // An operator member yields a value; there is no receiver-mutability check
+                // at an operator's use site, so declaring one mutating would be a promise
+                // nothing enforces. (`operator_def_name` already refuses `+ := …` for the
+                // symbol operators; the render member reaches here by its own branch.)
+                if mutating && member_name == "`" {
+                    return Err(ParseError {
+                        message: "The render member ` cannot be declared with ':=' — it renders a value rather than mutating `it`".to_string(),
+                        span: self.peek().span.clone(),
+                    });
+                }
                 self.advance();
 
                 let method_start = self.current_span();
@@ -376,11 +401,12 @@ impl<'a> Parser<'a> {
                     parameters,
                     return_type,
                     body,
+                    mutating,
                     span: self.span(method_start.start, method_end.end),
                 });
             } else {
                 return Err(ParseError {
-                    message: "Expected :: or = after field/method name".to_string(),
+                    message: "Expected ::, = or := after field/method name".to_string(),
                     span: self.peek().span.clone(),
                 });
             }
@@ -460,6 +486,20 @@ impl<'a> Parser<'a> {
                         name
                     ),
                     span: self.previous_span(),
+                });
+            }
+            // A sum's receiver has no writable field — its data lives in variant payloads,
+            // reached by matching, and a match binding is immutable. So `:=` here would
+            // declare a mutation nothing can perform and nothing checks; the same reason
+            // operator members refuse it. If payload mutation ever lands, allowing `:=`
+            // then only widens what is accepted.
+            if let Some(mutating) = methods.iter().find(|m| m.mutating) {
+                return Err(ParseError {
+                    message: format!(
+                        "sum type `{}` cannot have a mutating method — `{}` is declared with `:=`, but a sum has no fields to write (its data lives in variant payloads)",
+                        name, mutating.name
+                    ),
+                    span: mutating.span.clone(),
                 });
             }
             methods

@@ -2,22 +2,54 @@
 
 ```quilon
 greet  = => "Hello!"                       ~ no params
-double = x => x * 2                        ~ one param, no parens
-add    = (a, b) => a + b                   ~ multiple params
+double = (x :: Num) => x * 2               ~ one param
+add    = (a :: Num, b :: Num) => a + b     ~ multiple params
 typed  = (a :: Num, b :: Num) -> Num => a + b
 ```
+Every function parameter must be annotated — there is no default type; an
+unannotated parameter is a compile error that names it. There are two exceptions. A lambda
+passed to a built-in collection method (`.map` / `.filter` / `.reduce` / `.each`) takes its
+parameter type from the element type of the receiver. And an unannotated **method**
+parameter defaults to `Num` (see
+[named record types](../types/records.md#named-record-types-with-methods)).
 Multi-statement bodies use `< >` blocks (the last expression is the value):
 ```quilon
-compute = x => <
+compute = (x :: Num) => <
   doubled = x * 2
   doubled * doubled
 >
 ```
 Functions may recurse; a recursive function needs a `-> Type` annotation:
 ```quilon
-factorial = n -> Num => n == 0 ? 1 : n * factorial(n - 1)
+factorial = (n :: Num) -> Num => n == 0 ? 1 : n * factorial(n - 1)
 ```
 (See `examples/factorial.qn`, `examples/fibonacci.qn`.)
+
+## Function types & higher-order functions
+
+A **function type** is written with the arrow, reusing `->`. The parameter types go in
+parentheses; `$` (Unit) names a function that returns nothing:
+
+```quilon ignore
+() -> $              ~ takes nothing, returns unit
+(Num) -> Bool        ~ one parameter
+(Num, Text) -> Bool  ~ two parameters
+```
+
+A function type may be a **parameter type**, which is what makes a function *higher-order*
+— it takes another function as an argument and calls it:
+
+```quilon
+apply = (f :: (Num) -> Num, x :: Num) -> Num => f(x)
+twice = (f :: (Num) -> Num, x :: Num) -> Num => f(f(x))
+
+^ = () -> Num => twice((n :: Num) => n * 2, 3)   ~ ((3*2)*2) = 12
+```
+
+The value passed in is a closure — a lambda literal (as above) or a named closure passed
+by its name. Function types may nest as parameter types (`((Num) -> Bool, Num) -> Bool`).
+A function-typed **return** (currying, `(A) -> (B) -> C`) is not supported yet. (See
+`examples/higher_order.qn`.)
 
 ## Names resolve top to bottom
 

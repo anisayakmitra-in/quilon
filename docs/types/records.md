@@ -25,6 +25,10 @@ a = u.olderBy(5)       ~ 35
 ```
 (See `examples/methods.qn`.)
 
-A method is a **setter** (mutating) iff its body writes `it.field := …` (or calls
-another setter on `it`); there is no marker — the visible `:=` *is* the signal.
-Calling a setter requires a mutable (`:=`) receiver (see [Mutation](../mutation.md)).
+A method declared with `:=` instead of `=` is a **setter** — it may mutate its
+receiver — and calling one requires a mutable (`:=`) receiver
+(see [Mutation](../mutation.md)).
+
+An unannotated method parameter defaults to `Num` (as in any [ordinary
+definition](../functions/overloading.md)), and call sites are held to that default:
+`t.add("hi")` on `add = (x) => it.v + x` is a type error, not a runtime surprise.

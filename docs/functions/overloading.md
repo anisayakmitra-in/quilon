@@ -48,7 +48,9 @@ error: No overload of 'score' matches argument types (Bool). Candidates: (Num), 
 An operator is user-overloadable — `+ - * / %`, `== != < <= > >=` — as a **member of the
 type it operates on** (a [record](../types/records.md#named-record-types-with-methods) or a
 [sum](../types/sum-types.md)). `it` is the **left** operand. A **binary** operator member takes one
-explicit parameter, the **right** operand; a unary one (the render `` ` ``) takes none:
+explicit parameter, the **right** operand; a unary one (the render `` ` ``) takes none.
+An operator member is always `=`-declared and yields a value; it never mutates `it`
+(see [Mutation](../mutation.md)):
 
 ```quilon
 Vec = {

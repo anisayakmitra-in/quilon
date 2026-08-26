@@ -63,6 +63,13 @@ pub enum TypeError {
         receiver: String,
         span: Span,
     },
+    /// An `=`-declared method whose body mutates `it`, breaking the promise its binding
+    /// operator makes.
+    MutatingMethodDeclaredImmutable {
+        type_name: String,
+        method: String,
+        span: Span,
+    },
     DuplicateDefinition {
         name: String,
         span: Span,
@@ -90,6 +97,21 @@ pub enum TypeError {
     OverloadMissingAnnotation {
         name: String,
         parameter: String,
+        span: Span,
+    },
+    /// A function parameter with no type annotation. A parameter type is no longer assumed
+    /// to be `Num`: it must be written down. (A lambda passed to a built-in collection
+    /// method is the exception — its parameter type comes from the element type.)
+    UnannotatedParameter {
+        function: String,
+        parameter: String,
+        span: Span,
+    },
+    /// A function whose result is itself a function value. Taking a function as a parameter
+    /// works, but returning one across the call boundary is deferred, so it is rejected
+    /// rather than miscompiled.
+    UnsupportedFunctionReturn {
+        function: String,
         span: Span,
     },
     /// A write to a field of a `Site`. The type is read-only as a whole: a location is a
@@ -281,9 +303,8 @@ pub struct TypeChecker {
     methods: std::collections::HashMap<(String, String), MethodDef>,
     // Registry of sum types: TypeName -> Type::Sum
     sum_types: std::collections::HashMap<String, Type>,
-    // Methods that mutate their receiver in place ("setters"), inferred from the
-    // body containing `it.field := …` (or a call to another setter on `it`).
-    // Calling such a method requires a `:=`-bound (mutable) receiver.
+    // Methods declared with `:=` ("setters"): they may mutate their receiver in place,
+    // so calling one requires a `:=`-bound (mutable) receiver.
     setter_methods: std::collections::HashSet<(String, String)>,
     // The type oracle (see `TypeTable`): every inferred expression type, keyed by span,
     // populated as a side effect of `infer_expression` and returned by `check_program`.

@@ -33,7 +33,7 @@ bound it** — no capture list, no marker, mirroring the mutability rule for
 ```quilon
 ^ = () -> Num => <
   total := 0                 ~ `:=` -> captured BY REFERENCE
-  bump = n => <
+  bump = (n :: Num) => <
     total := total + n       ~ writes the SHARED cell; the effect persists across calls
     total
   >
@@ -41,16 +41,18 @@ bound it** — no capture list, no marker, mirroring the mutability rule for
   bump(20)                   ~ total -> 30  (same cell)
 
   base = 7                   ~ `=`  -> captured BY VALUE (a frozen copy)
-  addBase = x => x + base
+  addBase = (x :: Num) => x + base
 
   total + addBase(5)         ~ 30 + 12 = 42
 >
 ```
 
-A non-capturing nested function may **recurse** (`fact = n => … fact(n-1) …`). Nested
-closures may capture from any enclosing frame — the shared `:=` cell is threaded through
-every level. A closure value may itself be captured by another closure and called.
+A non-capturing nested function may **recurse** (`fact = (n :: Num) => … fact(n-1) …`).
+Nested closures may capture from any enclosing frame — the shared `:=` cell is threaded
+through every level. A closure value may itself be captured by another closure and called.
+A closure may also be **passed to a function** whose parameter has the matching
+[function type](README.md#function-types--higher-order-functions) and called there.
 
 Closures are **monomorphic**: parameters and captured values are concrete-typed. Capturing a
-polymorphic value, generic closures, and passing or returning a closure across frames are
-deferred — see [Known limitations](../status/limitations.md). (See `examples/closures.qn`.)
+polymorphic value, generic closures, and **returning** a closure across frames are deferred
+— see [Known limitations](../status/limitations.md). (See `examples/closures.qn`.)
