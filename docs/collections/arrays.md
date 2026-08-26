@@ -4,7 +4,7 @@ nums  = [1, 2, 3, 4, 5]
 count = nums.size      ~ → 5
 first = nums[0]        ~ → 1
 ```
-Arrays are `{ ptr, size }` internally. (See `examples/arrays.qn`.)
+(See `examples/arrays.qn`.)
 
 An array is **immutable**. There is no element assignment, and every operation returns a
 new array. A `:=` binding may be rebound to a different array — that changes the binding,
@@ -12,7 +12,7 @@ not the array.
 
 Indexing is **checked** — fail loud, never silent. An out-of-bounds, negative, or NaN index
 is a runtime error naming the read that failed ([shape](../tooling/errors.md)), with exit
-status 1. It is never a raw memory read. A **fractional** in-range index truncates toward
+status 1 — never a silently wrong value. A **fractional** in-range index truncates toward
 zero: `nums[1.7]` reads `nums[1]`. That is deliberate — with one unified `Num`, index
 arithmetic like `size / 2` legitimately produces fractions. When an index might be out of
 range, use [`at(n)`](#array-methods), the non-aborting `Ok`/`NotOk` form — see the
@@ -23,9 +23,8 @@ computed-index case at the end of `examples/array_methods.qn`.
 Arrays carry a set of **built-in, compiler-provided methods**, called with method
 syntax (`arr.method(...)`) and freely chainable. The higher-order ones take a **lambda**
 (`x => …`, `(a, b) => …`): an anonymous function literal valid **only** as a direct
-argument to one of these methods. The compiler **inlines** the lambda body per element
-rather than passing it as a function value. This is a deliberate specialization —
-Quilon's closures are not accepted as higher-order arguments here.
+argument to one of these methods. This is a deliberate specialization — Quilon's
+closures are not accepted as higher-order arguments here.
 
 | Method | Result | Notes |
 |--------|--------|-------|
@@ -80,6 +79,5 @@ Both sides must agree on the element type — `[]Num + []Text` (or `[]Num + Text
 type error. The forms are mutually exclusive, because an array `[]T` can never equal its
 own element `T`. Even nested arrays disambiguate cleanly: `[][]Num + []Num` is an
 **append** (the `[]Num` is a single new row → `[][]Num`), while `[][]Num + [][]Num` is a
-**concat**. `[]T + []T` is the same as the spread `[<-a, <-b]` and shares its element-copy
-lowering, so it is element-repr-correct for `[]Num`, `[]Text`, and nested arrays alike.
-(See `examples/array_concat.qn`.)
+**concat**. `[]T + []T` is the same as the spread `[<-a, <-b]`, for `[]Num`, `[]Text`,
+and nested arrays alike. (See `examples/array_concat.qn`.)

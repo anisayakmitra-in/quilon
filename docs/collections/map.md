@@ -39,9 +39,8 @@ grid :: [|Point => Text|] = [|Point { x = 0, y = 0 } => "origin"|]
 ```
 
 **Iteration order is UNSPECIFIED** — conceptually a map is unordered, so never rely on the
-order of `keys`/`values`/`each`. (It is the hash order, *not* insertion order. A fixed-seed
-hasher makes it reproducible run-to-run so example asserts don't flake, but that is an
-implementation detail, not a contract.)
+order of `keys`/`values`/`each`. (It is *not* insertion order. It may look stable
+run-to-run; that is not a contract.)
 
 **Access is via `.get`, which returns a `Result`** — `Ok(value)` when the key is present,
 `NotOk` when it is absent — so a caller must handle the missing case. There is **no bracket

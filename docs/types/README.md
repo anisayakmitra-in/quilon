@@ -1,7 +1,7 @@
 # Types
 
 ## `Num`
-All numbers — integers and floats are one unified type, represented as `f64`.
+All numbers — integers and floats are one unified type: an IEEE-754 double (64-bit float).
 ```quilon
 x = 42
 y = 3.14

@@ -5,13 +5,13 @@ used `.ql` until 0.9.1; it is CodeQL's extension, so GitHub attributed Quilon pr
 CodeQL. Rename a `.ql` file to `.qn` — nothing else about it changes.)
 
 ```bash
-quilon check   program.qn   # front-end only (lex + parse + resolve imports + typecheck)
-quilon run     program.qn   # front-end, then JIT-execute in-process (exit code = ^'s result)
+quilon check   program.qn   # typecheck only — no code runs
+quilon run     program.qn   # typecheck, then run directly (exit code = ^'s result)
 quilon build   program.qn   # produce a native executable
 quilon compile program.qn   # emit LLVM IR → program.ll (for inspection)
 ```
 
-`quilon build` emits an object file in-process and links it (with the Quilon runtime `libquilon_rt`, which carries the GC) into a native executable:
+`quilon build` produces a **self-contained** native executable — it runs on a machine with nothing else installed:
 ```bash
 quilon build program.qn -o program       # default linker: clang
 quilon build program.qn --linker gcc      # gcc also supported (CI checks both)
@@ -30,13 +30,10 @@ gdb ./program                              # break/step by .qn line, print local
 Debug info is opt-in: without `--debug` the binary carries none. It covers line tables,
 per-function scopes, and **locals, parameters, and debug types**. Every `=`/`:=` local and
 parameter is emitted with its type, and nested `{ }` blocks and closures get their own
-lexical scopes. Each Quilon type gets a distinct DWARF entry: `Num`/`Bool` as base types,
-and `Text`, arrays (`[]T`), records, and sum types as distinctly-named composites. A
-debugger therefore tells them apart despite their shared `{ptr, i64}`-ish machine shape.
+lexical scopes. Each Quilon type gets a distinct debug type — `Num`, `Bool`, `Text`,
+arrays (`[]T`), records, and sum types — so a debugger tells them apart.
 Line info is multi-file: a function from an imported module (`<<`) — corelib included — is
-attributed to its OWN source, so a debugger steps into it. The entry frame reads `^` (the
-generated C `main` shim is named for the entry point and marked artificial). The leaf `@`
-primitives and the inert built-in placeholders (`print`/`now`/…) lower to intrinsics and
-emit no subprogram, so a debugger steps over them.
+attributed to its OWN source, so a debugger steps into it. The entry frame reads `^`. A
+debugger steps over the leaf `@` primitives and the built-ins (`print`/`now`/…).
 
 (During development, prefix any command with `cargo run --`, e.g. `cargo run -- run program.qn`.)

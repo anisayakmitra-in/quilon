@@ -1,12 +1,11 @@
 # Closures and tail recursion
 
-## Tail self-recursion is optimized to a loop (guaranteed)
+## Tail self-recursion runs in constant stack (guaranteed)
 
 A self-call is in **tail position** when it is the function's whole result, with nothing
-left to do to it. When a function returns such a call, the compiler **guarantees** it is
-lowered to a loop instead of a stack-pushing call: the parameters become loop-carried
-slots and the call becomes a back-edge jump. So a tail-recursive function runs in
-**constant stack** and will not overflow, however deep the recursion:
+left to do to it. When a function returns such a call, the compiler **guarantees** the
+call does not grow the stack. So a tail-recursive function runs in **constant stack** and
+will not overflow, however deep the recursion:
 ```quilon
 count = (n :: Num, acc :: Num) -> Num =>
   n == 0 ? acc : count(n - 1, acc + n)   ~ the self-call IS the `:` branch → tail position
@@ -15,7 +14,8 @@ Tail position flows through the constructs that yield a value directly: `?`/`|` 
 arms, `if`/ternary branches, the tail of a `< >` block, and a `|>` pipeline. A self-call
 **not** in tail position stays ordinary recursion (e.g. `n * fact(n - 1)`, whose result
 is multiplied first). So does a tail call to a *different* function — general/mutual tail
-calls are a later follow-up. This is codegen-only; there is no surface syntax for it.
+calls are a later follow-up. There is no surface syntax for it: nothing is written to ask
+for the guarantee.
 (See `examples/tail_recursion.qn`, which recurses 1,000,000 deep.)
 
 ## Closures — capture by `=` (value) vs `:=` (reference)

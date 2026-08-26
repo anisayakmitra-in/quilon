@@ -35,7 +35,7 @@ exact-type [overload resolution](../functions/overloading.md).
 **Structured & scoped.** Deferred tasks are scoped to their enclosing `< >` block: the block
 forces and joins everything it launched before returning, and a panic propagates out.
 
-**Why it can be colorless.** Each fiber is **stackful** (via `corosensei`), so any function
+**Why it can be colorless.** Each fiber is **stackful**, so any function
 can park at a force point without the compiler rewriting it into a state machine.
 
 **Determinism.** Pure results are fully deterministic. The **ordering of side effects** across

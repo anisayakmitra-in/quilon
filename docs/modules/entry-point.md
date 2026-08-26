@@ -1,13 +1,13 @@
 # Entry point
 
-Every executable defines `^` (main). The compiler generates a C-compatible `main()` wrapper and initializes the GC.
+Every executable defines `^` (main); the program starts there.
 ```quilon ignore
 ^ = () -> Num => 42                              ~ no args/env
 ^ = (args :: []Text) -> Num => args.size         ~ command-line arguments
 ^ = (args :: []Text, env :: [|Text => Text|]) -> Num => env.get("HOME")   ~ args + environment
 ```
-**Arguments & environment.** `^` may declare, in order, two typed parameters that the
-generated `main()` wrapper fills from the C `argc`/`argv`/`envp`:
+**Arguments & environment.** `^` may declare, in order, two typed parameters, filled at
+startup:
 - `args :: []Text` — the command-line arguments (argv), **including** `argv[0]` (the
   program name), so `args.size` is always at least 1, and `args[i]` is the *i*-th
   argument as a `Text`.

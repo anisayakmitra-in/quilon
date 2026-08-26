@@ -23,7 +23,7 @@ scale = (n :: Num) => n * 3   ~ fine — a function value
 counter := 4            ~ fine — and writable from a function
 
 doubled = limit * 2     ~ error: has to be computed
-greeting = "hi"         ~ error: Text is a { pointer, length } pair, built at runtime
+greeting = "hi"         ~ error: a Text is built at runtime
 sizes = [1, 2]          ~ error: an array is built at runtime
 origin = { x = 0 }      ~ error: so is a record
 ```

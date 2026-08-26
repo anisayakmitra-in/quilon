@@ -1,5 +1,5 @@
 # `Text`
-UTF-8 text. A **built-in** type (like `Num`/`Bool`/arrays) — **no import needed**. Represented internally as `{ ptr, byte_len }`.
+UTF-8 text. A **built-in** type (like `Num`/`Bool`/arrays) — **no import needed**.
 ```quilon
 greeting = "héllo" + " 🌍"   ~ + concatenates (GC-allocated)
 b = greeting.size            ~ byte length      → 11

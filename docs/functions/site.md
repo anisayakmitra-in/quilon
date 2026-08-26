@@ -28,8 +28,7 @@ program cannot declare its own (as with `Result`). A program may still *build* o
 
 **A `Site` is read-only.** A location is a value, not a variable. Writing one of its fields
 (`site.line := 9`) is a compile error however the value was reached: records alias, so a
-write through a `:=` rebinding would write the same thing. This rule lets the compiler
-lower each call site to one shared constant.
+write through a `:=` rebinding would write the same thing.
 
 **Passing one explicitly forwards it.** That is the whole propagation rule. It makes a
 chain of wrappers report the *user's* call rather than the innermost hop — Rust's
@@ -47,9 +46,8 @@ a lambda or nested declaration (called through a value, not by name), and not on
 method (dispatched by receiver type). The arity a caller sees never counts it — `whereAmI()`
 above takes no arguments at the call site.
 
-Filling one in **costs nothing at run time**. The fields are compile-time constants, so each
-call site is a read-only constant whose address the call passes: no allocation, no unwinder,
-no debug info. JIT and native builds report identically. Assert as often as you like, in
-the hottest loop you have. (A site does cost image space: the record plus two relocations for
-its `Text` fields.) [`core.test`'s assertions](../corelib/test.md) are built on this; nothing
+Filling one in **costs nothing at run time**: the location is known at compile time, so the
+call allocates nothing. `quilon run` and a native build report identically. Assert as often
+as you like, in the hottest loop you have. (A site does cost a little binary size.)
+[`core.test`'s assertions](../corelib/test.md) are built on this; nothing
 about it is specific to them. See `examples/call_site.qn`.

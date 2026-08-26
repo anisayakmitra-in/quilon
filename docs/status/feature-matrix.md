@@ -23,7 +23,7 @@
 | Named record types + methods (`it`) | ✅ |
 | In-place mutation of `:=` records: field writes (`obj.f := v`) + setter methods | ✅ |
 | Functions, recursion, blocks, type inference | ✅ |
-| Guaranteed self-tail-call optimization (tail self-recursion → loop, constant stack) | ✅ |
+| Guaranteed self-tail-call optimization (tail self-recursion runs in constant stack) | ✅ |
 | Closures: lexical capture (`=` by value / `:=` by reference), monomorphic | ✅ |
 | Pipe `\|>` (first-arg injection) | ✅ |
 | Ranges: infix `lo <- hi` → inclusive `[]Num` (descends when `lo > hi`) | ✅ |
@@ -43,7 +43,7 @@
 | [Call-site locations](../functions/site.md): a trailing `site :: Site` parameter filled in by the compiler and forwarded by passing it on (track-caller) — a failing assertion reports YOUR call's `file:line:column` with a caret, identically under JIT and native | ✅ |
 | Terminal-aware color: a failing assertion's report is colored on a terminal and plain when redirected or under `NO_COLOR`/`TERM=dumb`; the `\e` (ESC) string escape writes an ANSI sequence from `.qn` | ✅ |
 | CLI helpers: `<< core.cli` (`getEnv` / `hasFlag` / `getOpt`; both `--name value` and `--name=value`; flag names with or without `--`) | ✅ |
-| Conservative GC (Boehm) | ✅ |
+| Garbage-collected memory (no manual free; self-contained binaries) | ✅ |
 | `Text` (and nested arrays) in records/arrays, or as a sum-type payload (`Ok(text)`) | ✅ |
 | `^` receives `args :: []Text` (argv) and `env :: [\|Text => Text\|]` (the environment as a Map) | ✅ |
 | Lambdas (`x => …`) as array-method arguments (inlined per element) | ✅ |
