@@ -1,10 +1,19 @@
 # Collections
 
-Quilon's built-in parametric collections: [arrays `[]T`](arrays.md), maps, and sets.
+Quilon has three built-in parametric collections: arrays, maps, and sets.
+
+## Arrays
+
+An array `[]T` is the **base built-in parametric collection** — the one Maps and Sets
+define themselves against — written as a bracket literal (`[1, 2, 3]`). `.size` counts its
+elements. Indexing (`nums[0]`) is checked and fails loud; use `at(n)` for the `Ok`/`NotOk`
+form. Its built-in methods (`map`/`filter`/`reduce`/`each`/`find`/`at`) chain freely, and
+`+` builds a new array. Full reference: [`docs/collections/arrays.md`](arrays.md) (and
+`examples/arrays.qn`, `examples/array_methods.qn`, `examples/array_concat.qn`).
 
 ## Maps
 
-A `Map` is a **built-in parametric collection** — like `[]T`, not a user-defined generic —
+A `Map` is a **built-in parametric collection** — like [`[]T`](#arrays), not a user-defined generic —
 written with a **pipe fence** `[|K => V|]` (`=>` reads "maps to"). It is immutable, keyed by
 `Num`/`Text`/`Bool` or a **user type** that defines both a `%` hash hook and an `==` member,
 and read through `.get` (which returns a `Result` — there is no bracket indexing on a map).
@@ -12,7 +21,7 @@ Full reference: [`docs/collections/map.md`](map.md) (and `examples/maps.qn`).
 
 ## Sets
 
-A `Set` is a **built-in parametric collection** — like `[]T`, not a user-defined generic —
+A `Set` is a **built-in parametric collection** — like [`[]T`](#arrays), not a user-defined generic —
 written with the same **pipe fence** `[|T|]` (which keeps a set literal distinct from an array).
 It is immutable, holds unique `Num`/`Text`/`Bool` elements (or a **user type** defining both
 a `%` hash hook and an `==` member), and supports set algebra
