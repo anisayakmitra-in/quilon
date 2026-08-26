@@ -6,6 +6,10 @@ first = nums[0]        ~ → 1
 ```
 Arrays are `{ ptr, size }` internally. (See `examples/arrays.qn`.)
 
+An array is **immutable**. There is no element assignment, and every operation returns a
+new array. A `:=` binding may be rebound to a different array — that changes the binding,
+not the array.
+
 Indexing is **checked** — fail loud, never silent. An out-of-bounds, negative, or NaN index
 is a runtime error naming the read that failed ([shape](../tooling/errors.md)), with exit
 status 1. It is never a raw memory read. A **fractional** in-range index truncates toward
