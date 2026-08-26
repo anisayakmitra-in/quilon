@@ -6,6 +6,58 @@ All notable changes to Quilon are documented here.
 
 ### Changed
 
+- **BREAKING: a setter is now declared with `:=`, and `=` methods are verified
+  non-mutating ([#198](https://github.com/assapir/quilon/issues/198)).** A method that
+  mutates its receiver is written `name := (…) => …`; one written `name = (…) => …`
+  promises not to, and the checker holds it to that — writing `it.field := …` in an `=`
+  method, or calling a `:=` sibling on `it`, is now a compile error naming the fix
+  (`Method 'T.bump' mutates 'it' but is declared with '='; declare it with ':='`).
+
+  The binding operator now means the same thing for a method as it does for a variable or
+  a record binding, and a method's right to mutate becomes part of its signature. Before,
+  setter-ness was *inferred* from the body, so adding a cache write to a getter silently
+  reclassified it and broke every `=`-receiver call site with no visible change to the
+  method's shape. Migration is mechanical: re-declare each mutating method with `:=`. Only
+  `examples/mutation.qn` needed it in this repository; corelib had none.
+
+  `:=` is confined to where it is enforced. The receiver-mutability gate lives in the
+  method-call path, which operator, render and hash members never reach, and a sum has no
+  field to write, so `+ := …`, `` ` := … `` and a `:=` sum method are rejected rather than
+  accepted as promises nothing checks.
+
+  Calling a setter still requires a `:=` receiver — unchanged, and that rule is what the
+  contract exists to serve. What is gone is the inference that decided which methods were
+  setters, along with the fixpoint it needed: every sibling's contract is now known from
+  its declaration.
+
+### Fixed
+
+- **Method checking: an immutability bypass and an unchecked call site.** Two soundness
+  holes in how methods were checked, both of which let a broken program past the checker.
+
+  A method that mutated `it` from **inside a lambda** — `steps.each(s => it.value := s)` —
+  was not classified a setter, because the walk that looks for the write had no case for a
+  lambda (nor for array, record, index, field-access or spread forms). An unclassified
+  setter stays callable on an `=`-bound receiver, which it then mutates: the headline
+  immutability promise, breakable in four lines. The same was true of a write inside a
+  function *declared* in the body. That walk is now the **verifier** behind the declared
+  contract above, rather than a classifier: it is a flat per-node predicate
+  over the AST's shared structural walk — one traversal that every analysis uses, exhaustive
+  with no catch-all arm, so a new expression form cannot silently reopen the hole: it fails
+  to compile until it is classified. (That walk moved from `deferral.rs` to `src/ast/walk.rs`
+  to be reachable from the checker.) The transitive rule (a method that calls another setter
+  is a setter) composes on top as before, so a setter reached only through a lambda-writing
+  sibling is caught too.
+
+  Separately, a method parameter with **no type annotation** defaults to `Num` when the body
+  is checked, but the call site skipped those arguments entirely. `t.add("hello")` on
+  `add = (x) => it.v + x` passed the checker and then died in codegen, printing a raw LLVM
+  verifier dump at the user. Call sites now hold arguments to the same `Num` the body was
+  checked against — which is what a plain function's unannotated parameter already did, so
+  this makes methods consistent rather than introducing a rule.
+
+### Changed
+
 - **The release publishes a binary per platform, under a new name each
   ([#49](https://github.com/assapir/quilon/issues/49)).** A release used to carry one asset,
   named `quilon`, built on Ubuntu. It now carries two, each named for what it runs on —

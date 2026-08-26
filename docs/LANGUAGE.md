@@ -16,7 +16,7 @@ Quilon's identity, and the rules that guide its design:
 - **Deliberate simplicity.** The smallest system that works: no generics (ad-hoc overloading is the only polymorphism), no `while`, no interfaces, a single `Num` type. Features are omitted on purpose.
 - **Fail loud, never silent.** Invalid inputs and meaningless operations must *fail* — never silently no-op, clamp, or return a magic sentinel. A statically-determinable problem is a **compile error**; anything else is a runtime error on stderr with a non-zero exit, saying [where it happened](#error-messages). (Hence `Text.indexOf → Ok(Num)/NotOk` rather than a `-1` sentinel, and `Text.replace`'s count/empty-argument checks failing rather than clamping.)
 - **No magic.** No hidden coercions, no implicit dispatch. Overloads are exact-typed; operators mean what they say.
-- **Immutable by default.** `=` binds immutably, `:=` binds mutably; because `:=` is visible wherever mutation happens, a method is a setter exactly when its body writes `it.field := …`.
+- **Immutable by default.** `=` binds immutably, `:=` binds mutably — for variables, for record bindings, and for methods: a method declared `name := …` may mutate its receiver, and one declared `name = …` is checked to make sure it does not.
 - **Errors are values.** Fallible operations return `Ok` / `NotOk` (a normal sum type) — no exceptions, no sentinels.
 - **Library APIs hide internals.** A library never makes the caller do its own conversion/desugaring (`print(x)`, never `print(show(x))`).
 
@@ -320,9 +320,13 @@ a = u.olderBy(5)       ~ 35
 ```
 (See `examples/methods.qn`.)
 
-A method is a **setter** (mutating) iff its body writes `it.field := …` (or calls
-another setter on `it`); there is no marker — the visible `:=` *is* the signal.
-Calling a setter requires a mutable (`:=`) receiver (see [Mutation](#mutation-in-place-field-writes--setters)).
+A method declared with `:=` instead of `=` is a **setter** — it may mutate its
+receiver — and calling one requires a mutable (`:=`) receiver
+(see [Mutation](#mutation-in-place-field-writes--setters)).
+
+An unannotated method parameter defaults to `Num` (as in any [ordinary
+definition](#overloading--ad-hoc-and-explicit)), and call sites are held to that default:
+`t.add("hi")` on `add = (x) => it.v + x` is a type error, not a runtime surprise.
 
 ### Sum types — `/`
 A sum type (tagged union / enum) is a set of named **variants**, declared with `/`
@@ -362,7 +366,8 @@ A sum type may carry a trailing `{ }` block of **methods** (the block is optiona
 with no methods is written exactly as above). `it` is the whole sum value, so a method
 typically matches on it. A member is a named method, an
 [operator](#operator-overloading), or the render `` ` ``. The block holds **methods only**
-— a sum has no fields, so a field-like entry there is a compile error.
+— a sum has no fields, so a field-like entry there is a compile error, and its methods are
+always `=` (see [Mutation](#mutation-in-place-field-writes--setters)).
 ```quilon
 Shape = Circle(Num) / Rect(Num, Num) {
   area = () -> Num => it ? | Circle(r) => 3 * r * r | Rect(w, h) => w * h
@@ -471,10 +476,15 @@ reassignment:
   read-only — a location is a value, not a variable — so writing one of its fields is an
   error even through a `:=` binding.
 
+A method is a **setter** when it is **declared** with `:=`, and the binding operator is
+the marker exactly as it is for a variable — a method's right to mutate is part of its
+signature.
+
 ```quilon
 Counter = {
   value :: Num,
-  bump = (by :: Num) => it.value := it.value + by   ~ setter: writes `it.value := …`
+  bump := (by :: Num) => it.value := it.value + by  ~ may mutate `it`
+  peek = => it.value                                ~ promises not to
 }
 
 c := Counter { value = 30 }   ~ `:=` -> mutable
@@ -482,8 +492,18 @@ c.bump(5)                      ~ setter mutates in place -> value = 35
 c.value := c.value + 7         ~ direct field write    -> value = 42
 ```
 
-A method is a **setter** iff its body writes `it.field := …` (or calls another setter on
-`it`) — no marker; the `:=` is the signal. A setter call requires a `:=` receiver:
+An `=` method is **held to its promise**: writing `it.field := …` in one, or calling a
+`:=` sibling on `it`, is a compile error telling you to declare it `:=`. The write counts
+**wherever it appears in the body** — nested inside a lambda, an array or record literal,
+a match arm, an argument list, or a function declared inside the body. Nesting does not
+launder a mutation:
+
+```quilon
+~ error: Method 'Counter.bumpAll' mutates 'it' but is declared with '='
+bumpAll = (steps :: []Num) => steps.each(s => it.value := s)
+```
+
+A setter call requires a `:=` receiver:
 
 ```quilon
 c = Counter { value = 30 }   ~ `=` -> immutable
@@ -491,8 +511,24 @@ c.value := 99                 ~ error: cannot write a field of immutable `c`
 c.bump(5)                     ~ error: cannot call mutating method `bump` on immutable `c`
 ```
 
-Getter methods carry no `it.field := …`, so they are callable on `=` instances too. (See
-`examples/mutation.qn`.)
+**Setters live on records.** Only a record's named methods may be declared `:=`. A sum's
+methods, and operator members on either kind (`` ` ``, `==`, `+`, …), are always `=` and
+non-mutating; `:=` on one is a compile error. Nothing they can do mutates the receiver
+anyway: a sum keeps its data in variant payloads, whose match bindings are immutable, and
+an operator or render member yields a value.
+
+```quilon
+Shape = Circle(Num) / Rect(Num, Num) {
+  area := () -> Num => 0      ~ error: a sum cannot have a mutating method
+}
+
+Counter = {
+  value :: Num,
+  + := (other :: Counter) -> Num => it.value   ~ error: an operator member is never `:=`
+}
+```
+
+(See `examples/mutation.qn`.)
 
 ---
 
@@ -676,7 +712,9 @@ error: No overload of 'score' matches argument types (Bool). Candidates: (Num), 
 An operator is user-overloadable — `+ - * / %`, `== != < <= > >=` — as a **member of the
 type it operates on** (a [record](#named-record-types-with-methods) or a
 [sum](#sum-types--)). `it` is the **left** operand; a **binary** operator member takes one
-explicit parameter (the **right** operand), a unary one (the render `` ` ``) takes none:
+explicit parameter (the **right** operand), a unary one (the render `` ` ``) takes none.
+An operator member is always `=`-declared and yields a value; it never mutates `it`
+(see [Mutation](#mutation-in-place-field-writes--setters)):
 
 ```quilon
 Vec = {
@@ -1251,7 +1289,7 @@ pathological input.
 | Spread: prefix `<-` in literals — array splice `[<-xs, 4]`, record update `{<-p, x = 9}` | ✅ |
 | Pattern matching (numbers, wildcard, identifiers, sum-type variants) | ✅ |
 | User-defined sum types (`/` separator), exhaustive matching, payload binding | ✅ |
-| Sum-type methods: optional trailing `{ }` block (named methods, operators, render `` ` ``; `it` = the value); no fields | ✅ |
+| Sum-type methods: optional trailing `{ }` block (named methods, operators, render `` ` ``; `it` = the value); no fields, no `:=` methods | ✅ |
 | `Result` as a normal predefined sum type (`Ok`/`NotOk`) | ✅ |
 | Sum-type payloads: `Num` / `Bool` / `Text` | ✅ |
 | Sum-type payload is a named **record** (`Method = Get / Post(Body)`; match binds it, reads its fields / calls its methods) | ✅ |
