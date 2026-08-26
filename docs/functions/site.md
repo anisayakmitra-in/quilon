@@ -22,18 +22,18 @@ whereAmI = (site :: Site) -> Text => "`site.file`:`site.line`:`site.column`"
 | `width` | `Num` | how many characters of the line the call spans |
 
 `line`, `column`, and `width` are always at least 1. `Site` is a built-in type name, so a
-program cannot declare its own (as with `Result`) — though it may *build* one
-(`Site { file = "…", line = 1, column = 1, excerpt = "…", width = 1 }`) and pass it on, and
+program cannot declare its own (as with `Result`). A program may still *build* one
+(`Site { file = "…", line = 1, column = 1, excerpt = "…", width = 1 }`) and pass it on;
 `failAt` will report wherever it says.
 
-**A `Site` is read-only.** A location is a value, not a variable: writing one of its fields
-(`site.line := 9`) is a compile error however the value was reached — records alias, so a
-write through a `:=` rebinding writes the same thing. That is what lets the compiler lower
-each call site to one shared constant.
+**A `Site` is read-only.** A location is a value, not a variable. Writing one of its fields
+(`site.line := 9`) is a compile error however the value was reached: records alias, so a
+write through a `:=` rebinding would write the same thing. This rule lets the compiler
+lower each call site to one shared constant.
 
-**Passing one explicitly forwards it.** That is the whole propagation rule, and it makes a
-chain of wrappers report the *user's* call rather than the innermost hop (Rust's
-`#[track_caller]`, as an ordinary argument):
+**Passing one explicitly forwards it.** That is the whole propagation rule. It makes a
+chain of wrappers report the *user's* call rather than the innermost hop — Rust's
+`#[track_caller]`, as an ordinary argument:
 
 ```quilon
 inner = (site :: Site) -> Num => site.line
@@ -41,15 +41,15 @@ outer = (site :: Site) -> Num => inner(site)   ~ forwards: reports where `outer`
 plain = (site :: Site) -> Num => inner()       ~ does not: reports THIS line
 ```
 
-Only a **top-level function's last** parameter can be filled in; a `Site` anywhere else is a
-compile error rather than an argument nothing supplies — not before another parameter, not on
+Only a **top-level function's last** parameter can be filled in. A `Site` anywhere else is a
+compile error rather than an argument nothing supplies: not before another parameter, not on
 a lambda or nested declaration (called through a value, not by name), and not on a record
-method (dispatched by receiver type). The arity a caller sees never counts it: `whereAmI()`
+method (dispatched by receiver type). The arity a caller sees never counts it — `whereAmI()`
 above takes no arguments at the call site.
 
-Filling one in **costs nothing at run time**: the fields are compile-time constants, so each
-call site is a read-only constant whose address the call passes — no allocation, no unwinder,
-no debug info, and JIT and native builds report identically. Assert as often as you like, in
+Filling one in **costs nothing at run time**. The fields are compile-time constants, so each
+call site is a read-only constant whose address the call passes: no allocation, no unwinder,
+no debug info. JIT and native builds report identically. Assert as often as you like, in
 the hottest loop you have. (A site does cost image space: the record plus two relocations for
 its `Text` fields.) [`core.test`'s assertions](../corelib/test.md) are built on this; nothing
 about it is specific to them. See `examples/call_site.qn`.

@@ -7,7 +7,7 @@ The infix `<-` operator builds an **inclusive** `[]Num`:
 4 <- 1          ~ [4, 3, 2, 1]   (descends when the left end is larger)
 5 <- 5          ~ [5]            (single point)
 ```
-It is pure **array sugar** — there is no distinct `Range` type; the result *is* a
+It is pure **array sugar**: there is no distinct `Range` type. The result *is* a
 `[]Num`, so it composes with `.size`, indexing `[i]`, and the [array methods](../types/arrays.md#array-methods):
 ```quilon
 r = 2 <- 5      ~ [2, 3, 4, 5]
@@ -15,7 +15,7 @@ n = r.size      ~ 4   (inclusive count = |hi - lo| + 1)
 first = r[0]    ~ 2
 r.each(x => print(x))   ~ a range iterates with `.each` like any array
 ```
-Both ends are full `Num` expressions (they may be dynamic, not just literals); the
+Both ends are full `Num` expressions — they may be dynamic, not just literals. The
 direction (ascending vs descending) is decided at runtime. (See `examples/ranges.qn`.)
 
 ## Spread in literals
@@ -34,8 +34,8 @@ The **prefix** `<-` splices a source's contents into an array or record literal:
 - **Naming the type you are building** — `Vec {<-p, x = 9}` — is the same update as a
   constructor. The stated target constrains the source: it must be **already that type** or
   an **anonymous record of exactly its shape** (same fields and types, nothing extra). A
-  different named type is never accepted however similar (`Point` and `Other` stay
-  distinct), and an anonymous record cannot fill a type declaring **methods**. Every declared
+  different named type is never accepted, however similar — `Point` and `Other` stay
+  distinct. An anonymous record cannot fill a type declaring **methods**. Every declared
   field must end up provided, by the spread or an override.
 
 ```quilon
@@ -50,8 +50,8 @@ c = Vec { <-a, x = 5 }   ~ the same update, naming the type being built
 ```
 
 **Range vs. spread.** `<-` is both the infix inclusive range (`lo <- hi`) and the prefix
-spread, told apart by **position**: first token of a `[ ]` element or `{ }` field is a
-spread, following a complete expression is the range. So:
+spread. **Position** tells them apart: as the first token of a `[ ]` element or `{ }`
+field it is a spread; after a complete expression it is the range. So:
 
 - `[1 <- 4]` is a **one-element** array whose sole element is the range `[1,2,3,4]`
   (the `<-` follows the complete expression `1`).

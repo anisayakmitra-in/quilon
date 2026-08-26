@@ -35,6 +35,6 @@ g = (n :: Num) -> Text => "a"
 g = (t :: Text) -> Text => "b"
 ```
 So **mutual recursion between top-level functions is not expressible**: whichever of the
-pair comes first would have to call the other before it exists. Self-recursion (including
-a recursive overload member calling itself) is unaffected — restructure a mutual pair into
-one self-recursive function.
+pair comes first would have to call the other before it exists. Self-recursion is
+unaffected, including a recursive overload member calling itself. Restructure a mutual
+pair into one self-recursive function.

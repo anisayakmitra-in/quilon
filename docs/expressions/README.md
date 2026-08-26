@@ -11,12 +11,13 @@
 > greater-than. So: don't end a line with a comparison `>`. `<=`/`>=`/`>>` are distinct
 > tokens and unaffected.
 
-> **Statement boundaries — line-first `(` / `[` / `{`.** Quilon has no statement separator,
-> and the grammar is newline-insensitive but for two rules: the line-final `>` above, and
-> this one — a `(`, `[`, or `{` that is the **first token on its line** begins a new
-> statement rather than continuing the previous expression as a call, index, or constructor.
-> Those must open on the **same line** as the expression they apply to, though once opened
-> they may span lines; a continuation line may still start with `.`, `|>`, or an operator.
+> **Statement boundaries — line-first `(` / `[` / `{`.** Quilon has no statement separator.
+> The grammar is newline-insensitive but for two rules: the line-final `>` above, and this
+> one — a `(`, `[`, or `{` that is the **first token on its line** begins a new statement
+> rather than continuing the previous expression as a call, index, or constructor.
+> A call, index, or constructor must open on the **same line** as the expression it applies
+> to; once opened it may span lines. A continuation line may still start with `.`, `|>`, or
+> an operator.
 > ```quilon
 > ~ (statements inside a `< >` block / `^` body)
 > ~ OK — these all continue the expression:

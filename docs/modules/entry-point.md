@@ -1,6 +1,6 @@
 # Entry point
 
-Every executable defines `^` (main); the compiler generates a C-compatible `main()` wrapper (and initializes the GC).
+Every executable defines `^` (main). The compiler generates a C-compatible `main()` wrapper and initializes the GC.
 ```quilon
 ^ = () -> Num => 42                              ~ no args/env
 ^ = (args :: []Text) -> Num => args.size         ~ command-line arguments
@@ -17,11 +17,12 @@ generated `main()` wrapper fills from the C `argc`/`argv`/`envp`:
   `env.get("HOME")` (or `<< core.cli`'s `getEnv`), both giving `Ok(value)`/`NotOk`.
 
 `args` is a real Quilon array (`.size`, `[index]`, the array methods) and `env` a real Map
-(`.get`/`.has`/`.keys`/`.size`); a value read out of either is a full `Text`: the whole
+(`.get`/`.has`/`.keys`/`.size`). A value read out of either is a full `Text`: the whole
 `Text` API, and [overload](../functions/overloading.md) dispatch by its concrete type.
-`quilon run <file> [args...]` and a native build agree on `args`: under `run`, the
-program sees `argv = [<file>, <args...>]` (the `quilon`/`run` CLI prefix is stripped and
-the `.qn` path becomes `argv[0]`), so `quilon run f.qn a b c` gives the same `args.size`
+
+`quilon run <file> [args...]` and a native build agree on `args`. Under `run`, the
+program sees `argv = [<file>, <args...>]`: the `quilon`/`run` CLI prefix is stripped and
+the `.qn` path becomes `argv[0]`. So `quilon run f.qn a b c` gives the same `args.size`
 and trailing arguments as a native `./f a b c` — `argv[0]` is the `.qn` path rather than
 the compiled binary's path, but everything the program indexes past it matches. (The
 legacy `^ = (argc :: Num, argv :: Num)` form, where `argv` was a placeholder `0`, still

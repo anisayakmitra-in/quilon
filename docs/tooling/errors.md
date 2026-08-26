@@ -26,9 +26,9 @@ file, an unresolved import) prints a plain one-line message. Any compile error e
 Runtime failures use the same frame at the expression responsible: a failing
 [`core.test` assertion](../corelib/test.md) at the assertion's call site, a fail-loud check (a
 bad `arr[i]`, a violated `Text.replace`/`repeat` contract) at the call that broke the
-contract. Those are colored when stderr is a terminal, plain when redirected or under
-`NO_COLOR`/`TERM=dumb`; compile errors are not colored yet. Because a runtime report carries
-the source line it names, that line's text is embedded in the built binary, with no way to
+contract. Reports are colored when stderr is a terminal, and plain when redirected or under
+`NO_COLOR`/`TERM=dumb`. Compile errors are not colored yet. A runtime report carries the
+source line it names, so that line's text is embedded in the built binary — with no way to
 strip it yet.
 
 To stay robust on hostile or machine-generated input, the parser also caps how

@@ -9,9 +9,9 @@ c = greeting.length          ~ grapheme count   → 7
 - `.length` = grapheme-cluster count (user-perceived characters, full UTF-8).
 - `+` = concatenation.
 
-Escapes inside a literal: `\n`, `\r`, `\t`, `\"`, `\\`, `\<` (a literal `<`, which would
-otherwise open a block), and `\e` — the ESC byte that leads an ANSI terminal sequence
-(`"\e[1m" + text + "\e[0m"`). Any other escape is a lex error.
+A literal accepts these escapes: `\n`, `\r`, `\t`, `\"`, `\\`, `\<`, and `\e`. `\<` writes
+a literal `<`, which would otherwise open a block. `\e` is the ESC byte that leads an ANSI
+terminal sequence (`"\e[1m" + text + "\e[0m"`). Any other escape is a lex error.
 
 ## Text methods
 
@@ -48,25 +48,25 @@ freely chainable. User-visible indices and lengths are **grapheme-based** (match
 "héllo".toUpper()                        ~ "HÉLLO"
 ```
 
-Like the [array methods](arrays.md#array-methods), these are **reserved on `Text`**: a same-named
-user overload on another type is fine, but on a `Text` receiver the built-in wins. `split`
-yields a plain `[]Text`, so it composes with `.size`, `[i]`, the
+These methods are **reserved on `Text`**, like the [array methods](arrays.md#array-methods)
+are on arrays. A same-named user overload on another type is fine, but on a `Text` receiver
+the built-in wins. `split` yields a plain `[]Text`, so it composes with `.size`, `[i]`, the
 [array methods](arrays.md#array-methods), and array `+`. There is **no `join`** — collapse a `[]Text`
 with `reduce` + `+`.
 
-`replace`/`replaceAll`/`repeat` **fail loudly**, never silently no-op or clamp. Rejected: an
-empty `from`; a `replace` `count` that is `<= 0` or exceeds the occurrences present; a
-negative or fractional `repeat` count. Literal cases are compile errors (`"a".replace("a",
-"b", 0)`, `"aa".replace("a", "b", 5)`); computed ones are a [located
-diagnostic](../tooling/errors.md) at run time, exit `101`. Use `replaceAll` for "replace
-everything"; `replace(count)` means exactly that many.
+`replace`/`replaceAll`/`repeat` **fail loudly**. They never silently no-op or clamp. Three
+inputs are rejected: an empty `from`; a `replace` `count` that is `<= 0` or exceeds the
+occurrences present; and a negative or fractional `repeat` count. A literal violation is a
+compile error (`"a".replace("a", "b", 0)`, `"aa".replace("a", "b", 5)`). A computed one is
+a [located diagnostic](../tooling/errors.md) at run time, with exit `101`. Use `replaceAll`
+for "replace everything"; `replace(count)` means exactly that many.
 
 (See `examples/text.qn` and `examples/text_methods.qn`.)
 
 ## String interpolation and the render operator (`` ` ``)
 
-A string literal may contain **interpolation holes** — an expression wrapped in
-backticks — which are rendered to `Text` and spliced in:
+A string literal may contain **interpolation holes**: expressions wrapped in backticks.
+Each hole is rendered to `Text` and spliced in:
 
 ```quilon
 "hi `user.name`"      ~ splices the rendered value of user.name
@@ -79,10 +79,10 @@ renderable. To write a **literal backtick**, double it: `` `` `` yields one `` `
 starts a hole). A plain string with no holes is an ordinary `Text` literal.
 
 **One render path.** Both interpolation and `print`/`eprint` render a value by invoking
-its `` ` `` (backtick) operator. Every built-in type has a **default** `` ` ``; **any**
-user type may **override** its rendering by defining its own `` ` `` operator — a member of
-the [record](records.md#named-record-types-with-methods) or [sum](sum-types.md#methods--the-optional---block),
-with `it` bound to the value, returning `Text`, and free to use interpolation itself:
+its `` ` `` (backtick) operator. Every built-in type has a **default** `` ` ``. Any user
+type may **override** its rendering by defining its own `` ` `` operator as a member of
+the [record](records.md#named-record-types-with-methods) or [sum](sum-types.md#methods--the-optional---block).
+The member binds `it` to the value, returns `Text`, and may use interpolation itself:
 
 ```quilon
 User = {

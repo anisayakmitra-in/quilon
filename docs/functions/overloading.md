@@ -30,8 +30,8 @@ error: No overload of 'score' matches argument types (Bool). Candidates: (Num), 
 - **The compiler's own definitions are members, not reserved names.** The built-in
   operators, and the corelib functions the compiler provides (`print`/`eprint`, `write`,
   `now`), are members of their sets like any other. Defining one of those names with a
-  different signature ADDS a member that wins for its argument types, and the built-in
-  stays reachable for the types it claims; defining the built-in's own signature is the
+  different signature ADDS a member that wins for its argument types; the built-in
+  stays reachable for the types it claims. Defining the built-in's own signature is the
   usual duplicate-definition error:
   ```quilon
   write = (content :: Text) -> Num => write(content, stdout)  ~ adds a member…
@@ -47,8 +47,8 @@ error: No overload of 'score' matches argument types (Bool). Candidates: (Num), 
 
 An operator is user-overloadable — `+ - * / %`, `== != < <= > >=` — as a **member of the
 type it operates on** (a [record](../types/records.md#named-record-types-with-methods) or a
-[sum](../types/sum-types.md)). `it` is the **left** operand; a **binary** operator member takes one
-explicit parameter (the **right** operand), a unary one (the render `` ` ``) takes none:
+[sum](../types/sum-types.md)). `it` is the **left** operand. A **binary** operator member takes one
+explicit parameter, the **right** operand; a unary one (the render `` ` ``) takes none:
 
 ```quilon
 Vec = {
@@ -73,9 +73,9 @@ rejected — the operator must be a member of its type.
 
 **The `%` hash hook.** A **unary** `% = () -> Num => …` member (`it` the value, no explicit
 parameter) is the type's **hash**, letting it be a [Map/Set key](../collections/README.md#maps) alongside its `==`
-member. Both are required together, and `%`/`==` must agree (equal values hash the same).
-This unary `%` is distinct from the binary `%` remainder operator (which takes one
-parameter), and has no call syntax of its own — the collections invoke it.
+member. Both are required together, and `%`/`==` must agree: equal values hash the same.
+This unary `%` is distinct from the binary `%` remainder operator, which takes one
+parameter. It has no call syntax of its own — the collections invoke it.
 
 (See `examples/overloading.qn`, `examples/sum_methods.qn`, `examples/maps.qn`,
 `examples/sets.qn`, and `examples/overload_dispatch.qn` for dispatch on argument types out
