@@ -92,6 +92,21 @@ pub enum TypeError {
         parameter: String,
         span: Span,
     },
+    /// A function parameter with no type annotation. A parameter type is no longer assumed
+    /// to be `Num`: it must be written down. (A lambda passed to a built-in collection
+    /// method is the exception — its parameter type comes from the element type.)
+    UnannotatedParameter {
+        function: String,
+        parameter: String,
+        span: Span,
+    },
+    /// A function whose result is itself a function value. Taking a function as a parameter
+    /// works, but returning one across the call boundary is deferred, so it is rejected
+    /// rather than miscompiled.
+    UnsupportedFunctionReturn {
+        function: String,
+        span: Span,
+    },
     /// A write to a field of a `Site`. The type is read-only as a whole: a location is a
     /// value, not a variable. It has to be — a compiler-filled call site is one shared
     /// read-only constant, and records alias, so a write through any binding of one would be

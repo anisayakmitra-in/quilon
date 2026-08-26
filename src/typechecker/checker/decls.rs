@@ -643,17 +643,21 @@ impl TypeChecker {
             return Ok(());
         }
 
-        // Build function type from parameters and return type
+        // Build function type from parameters and return type. A parameter with no
+        // annotation is a compile-time error: a function's own parameter has no context to
+        // be inferred from, so its type must be written down (there is no `Num` default).
         let parameter_types: Vec<Type> = declaration
             .parameters
             .iter()
-            .map(|p| {
-                p.type_annotation
-                    .as_ref()
-                    .map(|t| self.resolve_type(t))
-                    .unwrap_or(Type::Num)
+            .map(|p| match &p.type_annotation {
+                Some(t) => Ok(self.resolve_type(t)),
+                None => Err(TypeError::UnannotatedParameter {
+                    function: declaration.name.clone(),
+                    parameter: p.name.clone(),
+                    span: p.span.clone(),
+                }),
             })
-            .collect();
+            .collect::<Result<_, _>>()?;
 
         // Only a top-level function's LAST parameter can receive a call site.
         self.reject_unfillable_site_parameters(
@@ -710,6 +714,21 @@ impl TypeChecker {
         let body_type = self.infer_expression(&declaration.body)?;
 
         self.env.pop_scope();
+
+        // Returning a function value is deferred: a function may TAKE a function as a
+        // parameter, but handing one back across the call boundary is not supported yet.
+        // Checked on both the annotation and the inferred body so neither slips through.
+        let returns_function = matches!(body_type, Type::Function { .. })
+            || declaration
+                .return_type
+                .as_ref()
+                .is_some_and(|t| matches!(self.resolve_type(t), Type::Function { .. }));
+        if returns_function {
+            return Err(TypeError::UnsupportedFunctionReturn {
+                function: declaration.name.clone(),
+                span: declaration.span.clone(),
+            });
+        }
 
         // Verify the return type matches if annotated
         if let Some(ref annotated_type) = declaration.return_type {

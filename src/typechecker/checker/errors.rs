@@ -19,6 +19,8 @@ impl TypeError {
             | TypeError::NoMatchingOverload { span, .. }
             | TypeError::AmbiguousOverload { span, .. }
             | TypeError::OverloadMissingAnnotation { span, .. }
+            | TypeError::UnannotatedParameter { span, .. }
+            | TypeError::UnsupportedFunctionReturn { span, .. }
             | TypeError::SiteIsImmutable { span, .. }
             | TypeError::MisplacedSiteParameter { span, .. }
             | TypeError::OverloadCallBeforeDefinition { span, .. }
@@ -112,6 +114,24 @@ impl std::fmt::Display for TypeError {
                     f,
                     "Overloaded definition '{}' must annotate every parameter; '{}' has no type annotation",
                     name, parameter
+                )
+            }
+            TypeError::UnannotatedParameter {
+                function,
+                parameter,
+                ..
+            } => {
+                write!(
+                    f,
+                    "parameter '{}' of '{}' has no type: annotate it (its type cannot be inferred from context)",
+                    parameter, function
+                )
+            }
+            TypeError::UnsupportedFunctionReturn { function, .. } => {
+                write!(
+                    f,
+                    "'{}' returns a function, which is not supported yet — a function may take a function as a parameter, but not return one",
+                    function
                 )
             }
             TypeError::SiteIsImmutable { field, .. } => {
