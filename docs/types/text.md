@@ -21,7 +21,7 @@ freely chainable. User-visible indices and lengths are **grapheme-based** (match
 
 | Method | Result | Notes |
 |--------|--------|-------|
-| `split(sep :: Text)` | `[]Text` | split on `sep`; consecutive separators keep empty pieces (`"a,,b".split(",")` → `["a","","b"]`), an empty haystack yields `[""]`, and an **empty** `sep` splits into individual graphemes (`"abc".split("")` → `["a","b","c"]`) |
+| `split(separator :: Text)` | `[]Text` | split on `separator`; consecutive separators keep empty pieces (`"a,,b".split(",")` → `["a","","b"]`), an empty haystack yields `[""]`, and an **empty** `separator` splits into individual graphemes (`"abc".split("")` → `["a","b","c"]`) |
 | `trim()` | `Text` | strip leading **and** trailing whitespace |
 | `trimStart()` / `trimEnd()` | `Text` | strip leading-only / trailing-only whitespace |
 | `replaceAll(from :: Text, to :: Text)` | `Text` | replace **every** occurrence of `from` with `to` |

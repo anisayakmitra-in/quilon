@@ -35,7 +35,7 @@ Quilon's identity, and the rules that guide its design:
 | `$` | Unit type **and** its sole value | `f = () -> $ => $` |
 | `<<` | Import a module | `<< core.io` |
 | `>>` | Export an item from a module | `>> add = (a :: Num, b :: Num) => a + b` |
-| `\|>` | Pipe (first-arg injection) | `x \|> f(a)` ≡ `f(x, a)` |
+| `\|>` | Pipe (first-argument injection) | `x \|> f(a)` ≡ `f(x, a)` |
 | `<-` (infix) | Inclusive range → `[]Num` | `1 <- 4` ≡ `[1,2,3,4]` · `4 <- 1` ≡ `[4,3,2,1]` |
 | `<-` (prefix) | Spread inside a `[ ]` / `{ }` literal ([rule](expressions/ranges-and-spread.md#spread-in-literals)) | `[<-xs, 4]` · `{<-p, x = 9}` · `Vec {<-p, x = 9}` |
 | `?` `\|` `_` | Pattern match | `v ? \| 0 => "zero" \| _ => "other"` |

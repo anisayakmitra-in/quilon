@@ -26,7 +26,7 @@ error: No overload of 'score' matches argument types (Bool). Candidates: (Num), 
   g = (t :: Text) -> Num => 2
   ```
 - A single ordinary `name = …` definition is **not** an overload set: it keeps full
-  inference (unannotated params default to `Num`, return type inferred).
+  inference (unannotated parameters default to `Num`, return type inferred).
 - **The compiler's own definitions are members, not reserved names.** The built-in
   operators, and the corelib functions the compiler provides (`print`/`eprint`, `write`,
   `now`), are members of their sets like any other. Defining one of those names with a

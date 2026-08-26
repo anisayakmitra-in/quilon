@@ -15,7 +15,7 @@ like one that doesn't. `async`/`await` colors every function on the IO path; Go 
 still need an explicit `go`. The nearest precedent is **promise pipelining** (E, Cap'n Proto).
 
 **`@` marks leaf IO primitives only** — the corelib/runtime primitives that actually do IO
-(`http.get`, a file read, a socket recv, `sleep`). All user code is unmarked: a function that
+(`http.get`, a file read, a socket receive, `sleep`). All user code is unmarked: a function that
 transitively calls an `@` primitive is concurrency-capable for free, with **no propagation**
 up the call chain. That absence of propagation is what makes the model colorless.
 

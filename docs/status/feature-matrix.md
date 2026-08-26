@@ -9,7 +9,7 @@
 | `Text` built-in: literals, `+`, `.size`, `.length` | ✅ |
 | `Text` comparison: `==`/`!=` (equality), `<`/`<=`/`>`/`>=` (lexicographic) | ✅ |
 | `Text` methods: `split`/`trim`/`trimStart`/`trimEnd`/`replaceAll`/`replace`/`repeat`/`contains`/`indexOf`/`slice`/`toUpper`/`toLower` (chainable; grapheme-based) | ✅ |
-| Ad-hoc overloading: same-named typed defs, exact-type dispatch | ✅ |
+| Ad-hoc overloading: same-named typed definitions, exact-type dispatch | ✅ |
 | Operator overloading as a type member (`+`, comparisons, … with `it` the left operand); built-ins as overloads | ✅ |
 | `Bool` | ✅ |
 | `Unit` type / value (`$`) | ✅ |
@@ -25,7 +25,7 @@
 | Functions, recursion, blocks, type inference | ✅ |
 | Guaranteed self-tail-call optimization (tail self-recursion runs in constant stack) | ✅ |
 | Closures: lexical capture (`=` by value / `:=` by reference), monomorphic | ✅ |
-| Pipe `\|>` (first-arg injection) | ✅ |
+| Pipe `\|>` (first-argument injection) | ✅ |
 | Ranges: infix `lo <- hi` → inclusive `[]Num` (descends when `lo > hi`) | ✅ |
 | Spread: prefix `<-` in literals — array splice `[<-xs, 4]`, record update `{<-p, x = 9}` | ✅ |
 | Pattern matching (numbers, wildcard, identifiers, sum-type variants) | ✅ |
@@ -34,8 +34,8 @@
 | `Result` as a normal predefined sum type (`Ok`/`NotOk`) | ✅ |
 | Sum-type payloads: `Num` / `Bool` / `Text` | ✅ |
 | Sum-type payload is a named **record** (`Method = Get / Post(Body)`; match binds it, reads its fields / calls its methods) | ✅ |
-| Concrete `Result` payloads: a bound `Ok`/`NotOk` payload is usable at its real type (overload dispatch, across `-> Result` fn boundaries) | ✅ |
-| Uniform `Result` layout: a `Result` of ANY payload (`Num`/`Text`/`[]Text`/composite) passes through a generic `(r :: Result)` param/return — powers `assertOk`/`assertNotOk` on `getEnv`/`getOpt` | ✅ |
+| Concrete `Result` payloads: a bound `Ok`/`NotOk` payload is usable at its real type (overload dispatch, across `-> Result` function boundaries) | ✅ |
+| Uniform `Result` layout: a `Result` of ANY payload (`Num`/`Text`/`[]Text`/composite) passes through a generic `(r :: Result)` parameter or return — powers `assertOk`/`assertNotOk` on `getEnv`/`getOpt` | ✅ |
 | Modules: `<< core.io`, `<< core.test`, `<< core.cli`, `<< core.time`, `<< core.net`, file-path imports, `>>` exports | ✅ |
 | I/O: `print` / `eprint` / `write` | ✅ |
 | I/O: `@readStdin` — deferred stdin line read, forced on use | ✅ |

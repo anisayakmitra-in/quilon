@@ -21,7 +21,7 @@ computed-index case at the end of `examples/array_methods.qn`.
 ## Array methods
 
 Arrays carry a set of **built-in, compiler-provided methods**, called with method
-syntax (`arr.method(...)`) and freely chainable. The higher-order ones take a **lambda**
+syntax (`array.method(...)`) and freely chainable. The higher-order ones take a **lambda**
 (`x => …`, `(a, b) => …`): an anonymous function literal valid **only** as a direct
 argument to one of these methods. This is a deliberate specialization — Quilon's
 closures are not accepted as higher-order arguments here.
@@ -29,11 +29,11 @@ closures are not accepted as higher-order arguments here.
 | Method | Result | Notes |
 |--------|--------|-------|
 | `map(f)` | new `[]R` | element type `R` is `f`'s return type (so `map` may change the element type, e.g. `[]Num → []Text`) |
-| `filter(pred)` | new `[]elem` | keeps the elements where `pred` returns `Bool` `true`, in order; `pred` **must** return `Bool` |
-| `reduce(init, (acc, x) => …)` | the accumulator | fold-left from `init`; the reducer's result type must match `init`'s type |
+| `filter(predicate)` | new `[]element` | keeps the elements where `predicate` returns `Bool` `true`, in order; `predicate` **must** return `Bool` |
+| `reduce(initial, (accumulator, x) => …)` | the accumulator | fold-left from `initial`; the reducer's result type must match `initial`'s type |
 | `each(f)` | **the receiver array** | runs `f` for side effects, then returns the array itself, so it chains |
-| `find(pred)` | `Ok(elem)` / `NotOk` | the first element satisfying `pred`, absent-safe; `pred` returns `Bool` |
-| `at(n :: Num)` | `Ok(elem)` / `NotOk` | non-aborting index — `Ok` in bounds, `NotOk` otherwise (incl. NaN); raw `arr[n]` aborts with a runtime error instead |
+| `find(predicate)` | `Ok(element)` / `NotOk` | the first element satisfying `predicate`, absent-safe; `predicate` returns `Bool` |
+| `at(n :: Num)` | `Ok(element)` / `NotOk` | non-aborting index — `Ok` in bounds, `NotOk` otherwise (including NaN); a raw `array[n]` aborts with a runtime error instead |
 
 ```quilon
 nums = [1, 2, 3, 4, 5, 6]

@@ -12,7 +12,7 @@ startup:
   program name), so `args.size` is always at least 1, and `args[i]` is the *i*-th
   argument as a `Text`.
 - `env :: [|Text => Text|]` — the environment, as a Map from each variable's name to its
-  value. An entry `KEY=val` is split on its **first** `=` (so `KEY=a=b` maps `KEY` to
+  value. An entry `KEY=value` is split on its **first** `=` (so `KEY=a=b` maps `KEY` to
   `a=b`); an entry with no `=` maps the whole string to `""`. Read a variable with
   `env.get("HOME")` (or `<< core.cli`'s `getEnv`), both giving `Ok(value)`/`NotOk`.
 
