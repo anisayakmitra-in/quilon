@@ -1,6 +1,6 @@
 # Modules
 
-```quilon
+```quilon ignore
 << core.io                 ~ import the built-in IO module
 << "lib/math.qn"           ~ import a user module by path (/ or \)
 

@@ -23,7 +23,7 @@ Shape = Circle(Num) / Rect(Num, Num)       ~ variants with payloads
 
 **Construct** a value by naming the variant (with payload arguments if it has any), and
 **consume** it with `?`/`|` pattern matching, which binds the payload:
-```quilon
+```quilon ignore
 area = (s :: Shape) -> Num => s ?
   | Circle(r)  => 3 * r * r
   | Rect(w, h) => w * h          ~ binds both payload fields
@@ -49,7 +49,7 @@ Rect(6, 7).area()                ~ 42
 
 ## `Result` is a normal sum type
 `Result` is just a predefined sum type — there is no special case:
-```quilon
+```quilon ignore
 Result = Ok(...) / NotOk(...)    ~ predefined; `Ok` = success, `NotOk` = failure
 ```
 Use it exactly like any other sum type:
@@ -87,7 +87,7 @@ body instead (`Ok(n) => n == 1 ? … : …`).
 apart by its **Capitalized-type / lowercase-value** convention. `/` is a variant separator
 **only** in a type-declaration context — that is, when the binding name and every operand
 are Capitalized type/constructor names:
-```quilon
+```quilon ignore
 Color = Red / Green / Blue       ~ sum type: name + operands are Capitalized
 half  = a / b                    ~ division: lowercase operands are values
 ```

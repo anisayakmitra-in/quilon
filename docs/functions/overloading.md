@@ -4,7 +4,7 @@ Quilon has **explicit ad-hoc overloading** — the only polymorphism, since ther
 generics. Top-level definitions that share a name and each annotate their parameters *are*
 an overload set; there is no marker:
 
-```quilon
+```quilon ignore
 score = (n :: Num)  -> Num => n + 1       ~ the Num member
 score = (s :: Text) -> Num => s.size      ~ the Text member
 
@@ -21,7 +21,7 @@ error: No overload of 'score' matches argument types (Bool). Candidates: (Num), 
 
 - Every member must annotate **all** its parameters **and its return type** — the signature
   is what dispatch selects on, and a call has to know what it produces:
-  ```quilon
+  ```quilon ignore
   g = (n :: Num) => 1        ~ error: overload member 'g' (Num) has no return type
   g = (t :: Text) -> Num => 2
   ```
@@ -33,7 +33,7 @@ error: No overload of 'score' matches argument types (Bool). Candidates: (Num), 
   different signature ADDS a member that wins for its argument types; the built-in
   stays reachable for the types it claims. Defining the built-in's own signature is the
   usual duplicate-definition error:
-  ```quilon
+  ```quilon ignore
   write = (content :: Text) -> Num => write(content, stdout)  ~ adds a member…
   write("raw")           ~ …which this call picks
   write("raw", stdout)   ~ while this one still reaches the built-in

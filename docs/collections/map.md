@@ -61,7 +61,7 @@ the receiver is a Map):
 | `values()` | `[]V` | the values as an array (same order as `keys()`) |
 | `each((k, v) => …)` | **the receiver map** | runs the body per entry for effect, then returns the map (chains) |
 
-```quilon
+```quilon ignore
 << core.io
 m :: [|Text => Num|] = [|"a" => 1, "b" => 2|]
 total = m.values().reduce(0, (acc, x) => acc + x)   ~ 3

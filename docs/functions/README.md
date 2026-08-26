@@ -24,12 +24,12 @@ factorial = n -> Num => n == 0 ? 1 : n * factorial(n - 1)
 A call may only name something **already defined above it** — there is no hoisting. A
 definition is in scope for its own body (so a function may recurse) and for everything
 that follows it, but not for anything before it:
-```quilon
+```quilon ignore
 ^ = () -> Num => later()   ~ error: Undefined variable 'later'
 later = () -> Num => 7
 ```
 This holds for overload-set members too, which report the situation by name:
-```quilon
+```quilon ignore
 h = () -> Text => g(1)     ~ error: cannot call 'g' before its definition
 g = (n :: Num) -> Text => "a"
 g = (t :: Text) -> Text => "b"

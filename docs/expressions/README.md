@@ -18,7 +18,7 @@
 > A call, index, or constructor must open on the **same line** as the expression it applies
 > to; once opened it may span lines. A continuation line may still start with `.`, `|>`, or
 > an operator.
-> ```quilon
+> ```quilon ignore
 > ~ (statements inside a `< >` block / `^` body)
 > ~ OK — these all continue the expression:
 > sum = add(40,
@@ -44,10 +44,10 @@
 - **Ternary:** `cond ? then : else`.
 - **Blocks:** `< stmt… last >` are expressions that evaluate to their last expression — usable anywhere a value is, not just as a function body:
 ```quilon
-result = <
+result = () -> Num => <
   x = 10
   y = 20
-  x + y          ~ result is 30
+  x + y          ~ result() is 30
 >
 ```
 

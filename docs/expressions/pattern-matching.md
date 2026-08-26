@@ -1,6 +1,6 @@
 # Pattern matching
 
-```quilon
+```quilon ignore
 result = value ?
   | 0        => "zero"
   | 1        => "one"

@@ -25,7 +25,7 @@ c.value := c.value + 7         ~ direct field write    -> value = 42
 A method is a **setter** iff its body writes `it.field := …`, or calls another setter on
 `it`. There is no marker; the `:=` is the signal. A setter call requires a `:=` receiver:
 
-```quilon
+```quilon ignore
 c = Counter { value = 30 }   ~ `=` -> immutable
 c.value := 99                 ~ error: cannot write a field of immutable `c`
 c.bump(5)                     ~ error: cannot call mutating method `bump` on immutable `c`

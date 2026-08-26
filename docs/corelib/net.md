@@ -16,14 +16,15 @@ scheduler (a numeric `host:port` skips it); non-blocking DNS is a later refineme
 << core.net
 << core.io
 
-^ = () -> Num => <
+reportFailure = (message :: Text) -> Num => <
+  eprint(message)   ~ error to stderr…
+  1                 ~ …and a non-zero exit
+>
+
+^ = () -> Num =>
   @tcpRequest("localhost:8080", "GET / HTTP/1.0\r\n\r\n") ?
     | Ok(response) => response.size > 0 ? 0 : 1   ~ forced by the match
-    | NotOk(error) => <
-        eprint(error)
-        1
-      >
->
+    | NotOk(error) => reportFailure(error)
 ```
 
 Being deferred, independent requests on one fiber overlap automatically — each forces where

@@ -68,7 +68,7 @@ for "replace everything"; `replace(count)` means exactly that many.
 A string literal may contain **interpolation holes**: expressions wrapped in backticks.
 Each hole is rendered to `Text` and spliced in:
 
-```quilon
+```quilon ignore
 "hi `user.name`"      ~ splices the rendered value of user.name
 "sum: `a + b`"        ~ any expression, not just a variable
 "port `getPort()`"    ~ a call

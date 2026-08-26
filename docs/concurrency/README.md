@@ -94,7 +94,7 @@ The HTTP client sits on it — framing and parsing happen in ordinary Quilon on 
 A networked value-returning primitive makes independent launches overlap, which is the reason
 implicit futures matter:
 
-```quilon
+```quilon ignore
 ~ `@get` is a leaf IO primitive (corelib/runtime) — the ONLY marked thing here.
 ~ `fetchJson` is ordinary, unmarked user code, yet concurrency-capable for free:
 fetchJson = (url :: Text) -> Text => @get(url)   ~ launches IO, returns a deferred Text

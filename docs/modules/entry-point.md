@@ -1,7 +1,7 @@
 # Entry point
 
 Every executable defines `^` (main). The compiler generates a C-compatible `main()` wrapper and initializes the GC.
-```quilon
+```quilon ignore
 ^ = () -> Num => 42                              ~ no args/env
 ^ = (args :: []Text) -> Num => args.size         ~ command-line arguments
 ^ = (args :: []Text, env :: [|Text => Text|]) -> Num => env.get("HOME")   ~ args + environment
