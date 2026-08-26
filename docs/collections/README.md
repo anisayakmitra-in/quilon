@@ -1,5 +1,7 @@
 # Collections
 
+Quilon's built-in parametric collections: [arrays `[]T`](arrays.md), maps, and sets.
+
 ## Maps
 
 A `Map` is a **built-in parametric collection** — like `[]T`, not a user-defined generic —

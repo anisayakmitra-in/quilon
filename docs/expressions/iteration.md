@@ -1,6 +1,6 @@
 # Iteration — array methods + recursion
 Quilon has **no `for`/`while` loop**. A collection is iterated with the built-in
-[array methods](../types/arrays.md#array-methods): `.each` runs a body for its side effects (the direct
+[array methods](../collections/arrays.md#array-methods): `.each` runs a body for its side effects (the direct
 replacement for a side-effecting loop), and `.map`/`.filter`/`.reduce` transform or fold
 without any mutable accumulator. Each takes a lambda the compiler inlines per element:
 ```quilon

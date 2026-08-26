@@ -8,7 +8,7 @@ The infix `<-` operator builds an **inclusive** `[]Num`:
 5 <- 5          ~ [5]            (single point)
 ```
 It is pure **array sugar**: there is no distinct `Range` type. The result *is* a
-`[]Num`, so it composes with `.size`, indexing `[i]`, and the [array methods](../types/arrays.md#array-methods):
+`[]Num`, so it composes with `.size`, indexing `[i]`, and the [array methods](../collections/arrays.md#array-methods):
 ```quilon
 r = 2 <- 5      ~ [2, 3, 4, 5]
 n = r.size      ~ 4   (inclusive count = |hi - lo| + 1)

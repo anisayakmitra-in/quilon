@@ -48,10 +48,10 @@ freely chainable. User-visible indices and lengths are **grapheme-based** (match
 "héllo".toUpper()                        ~ "HÉLLO"
 ```
 
-These methods are **reserved on `Text`**, like the [array methods](arrays.md#array-methods)
+These methods are **reserved on `Text`**, like the [array methods](../collections/arrays.md#array-methods)
 are on arrays. A same-named user overload on another type is fine, but on a `Text` receiver
 the built-in wins. `split` yields a plain `[]Text`, so it composes with `.size`, `[i]`, the
-[array methods](arrays.md#array-methods), and array `+`. There is **no `join`** — collapse a `[]Text`
+[array methods](../collections/arrays.md#array-methods), and array `+`. There is **no `join`** — collapse a `[]Text`
 with `reduce` + `+`.
 
 `replace`/`replaceAll`/`repeat` **fail loudly**. They never silently no-op or clamp. Three

@@ -21,3 +21,6 @@ result is meaningless. `print` and `eprint` return `$`. `$` is compatible only w
 log = (m :: Text) -> $ => print(m)   ~ a function whose result is meaningless
 ^ = () -> $ => log("started")        ~ a `$` body exits 0 (it is not a Num)
 ```
+
+Arrays (`[]T`) live with the other built-in parametric collections — see
+[`collections/arrays.md`](../collections/arrays.md).

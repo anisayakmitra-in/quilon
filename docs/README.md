@@ -54,8 +54,8 @@ No word is reserved either, so `if = 5` or a function named `while` is perfectly
 
 ## Contents
 
-- Types: [overview](types/README.md) (`Num`, `Bool`, `$`) · [Text](types/text.md) · [arrays](types/arrays.md) · [records](types/records.md) · [sum types](types/sum-types.md)
-- [Collections](collections/README.md): maps and sets
+- Types: [overview](types/README.md) (`Num`, `Bool`, `$`) · [Text](types/text.md) · [records](types/records.md) · [sum types](types/sum-types.md)
+- [Collections](collections/README.md): [arrays](collections/arrays.md), maps, and sets
 - [Variables](variables.md) · [Mutation](mutation.md)
 - Functions: [basics](functions/README.md) · [closures and tail recursion](functions/closures.md) · [overloading](functions/overloading.md) · [call-site locations](functions/site.md)
 - Expressions: [operators and blocks](expressions/README.md) · [pipe](expressions/pipe.md) · [iteration](expressions/iteration.md) · [ranges and spread](expressions/ranges-and-spread.md) · [pattern matching](expressions/pattern-matching.md)
