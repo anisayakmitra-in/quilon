@@ -139,7 +139,7 @@ fn failed_build_preserves_adjacent_object_and_removes_its_staged_object() {
     std::fs::write(&adjacent_object, sentinel).expect("write adjacent object");
 
     let missing_linker = format!("quilon-missing-linker-{}", std::process::id());
-    let runtime = option_env!("QUILON_RT_LIB").expect("build script baked runtime archive");
+    let runtime = env!("QUILON_RT_LIB");
     let build = Command::new(env!("CARGO_BIN_EXE_quilon"))
         .args(["build", source.to_str().unwrap()])
         .args(["-o", out.to_str().unwrap()])
