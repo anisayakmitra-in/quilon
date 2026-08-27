@@ -99,6 +99,19 @@ Beyond 0.9, the design aims at **implicit parallelism** — sequential-looking c
 Thanks to everyone who has contributed to Quilon. This table updates itself.
 
 <!-- readme: contributors,assapir/- -start -->
+<table>
+	<tbody>
+		<tr>
+            <td align="center">
+                <a href="https://github.com/anisayakmitra-in">
+                    <img src="https://avatars.githubusercontent.com/u/266799942?v=4" width="100;" alt="anisayakmitra-in"/>
+                    <br />
+                    <sub><b>ANISAYAK MITRA</b></sub>
+                </a>
+            </td>
+		</tr>
+	<tbody>
+</table>
 <!-- readme: contributors,assapir/- -end -->
 
 ## Licensing
