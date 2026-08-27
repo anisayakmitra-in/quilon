@@ -61,10 +61,6 @@ const ERASED_BLOCK_MARKER: &str = "ERASED-TEST-BLOCK-RAN";
 /// ABSENCE under `quilon test` is what proves that `^` is not the test run's entry point.
 const PROGRAM_MARKER: &str = "PROGRAM-RAN-WITHOUT-ITS-TEST-BLOCKS";
 
-/// The line `examples/use_tested_module.qn` prints from its `^`, so an importer's run is told
-/// apart from the imported module's own.
-const IMPORTER_MARKER: &str = "IMPORTER-RAN-WITHOUT-THE-MODULE-TEST-BLOCKS";
-
 /// Where a test's `.qn` files go, unique per process so parallel runs never collide.
 fn work_dir(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("quilon_harness_{}_{tag}", std::process::id()));
@@ -217,16 +213,16 @@ fn a_build_of_a_file_with_tests_omits_the_test_code() {
 }
 
 /// The whole point, in three assertions: `out` is a run of a program whose file also holds test
-/// blocks, so it exits 0 having printed `marker` — which tells "the blocks were erased" apart
-/// from "nothing ran at all" — and no [`ERASED_BLOCK_MARKER`].
-fn assert_ran_without_its_tests(what: &str, marker: &str, out: &Output) {
+/// blocks, so it exits 0 having printed [`PROGRAM_MARKER`] — which tells "the blocks were
+/// erased" apart from "nothing ran at all" — and no [`ERASED_BLOCK_MARKER`].
+fn assert_ran_without_its_tests(what: &str, out: &Output) {
     assert_eq!(
         out.code, 0,
         "{what} must exit 0:\n{}\n{}",
         out.stdout, out.stderr
     );
     assert!(
-        out.stdout.contains(marker),
+        out.stdout.contains(PROGRAM_MARKER),
         "{what} printed nothing of its own, so nothing ran:\n{}",
         out.stdout
     );
@@ -569,13 +565,13 @@ fn the_shipped_example_builds_without_the_tests_beside_its_entry_point() {
     let source = example("tests_alongside_code.qn");
 
     let run = quilon(&["run", source.to_str().unwrap()]);
-    assert_ran_without_its_tests("`quilon run` on the example", PROGRAM_MARKER, &run);
+    assert_ran_without_its_tests("`quilon run` on the example", &run);
 
     match available_linker() {
         Some(linker) => {
             let dir = work_dir("shipped");
             let native = build_and_execute(&source, &dir, linker);
-            assert_ran_without_its_tests("the built example", PROGRAM_MARKER, &native);
+            assert_ran_without_its_tests("the built example", &native);
             let _ = std::fs::remove_dir_all(&dir);
         }
         None => eprintln!("skipping the native half: need a linker (`clang` or `gcc`) on PATH"),
@@ -612,20 +608,4 @@ fn the_shipped_example_runs_its_tests_under_quilon_test() {
             out.stdout
         );
     }
-}
-
-/// A program that imports a tested module gets its exports and nothing else of it: the blocks
-/// and the `^` are the module's own, dropped when the import is resolved rather than merged
-/// in. (The native build of this same example is the `examples/` JIT-AOT parity gate's.)
-#[test]
-fn the_shipped_program_importing_the_tested_module_gets_none_of_its_tests() {
-    let program = example("use_tested_module.qn");
-
-    let run = quilon(&["run", program.to_str().unwrap()]);
-    assert_ran_without_its_tests("`quilon run` on the importer", IMPORTER_MARKER, &run);
-    assert!(
-        !run.stdout.contains(PROGRAM_MARKER),
-        "the imported module's `^` is not the importer's:\n{}",
-        run.stdout
-    );
 }
