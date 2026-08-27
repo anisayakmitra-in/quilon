@@ -83,10 +83,9 @@ pub struct Checked {
     /// the promise representation and forces; empty for pure programs.
     pub defer: crate::deferral::DeferInfo,
     /// The file is a test suite rather than a program: it has top-level test blocks and no
-    /// `^` of its own (whatever fixtures its cases need are fine). Stripping the blocks
-    /// leaves nothing to run, so `run`/`compile`/`build` pass over it in silence. A file that
-    /// has BOTH is a program whose tests sit beside it, and builds like any other. Recorded
-    /// before the link, which merges an `^` from nowhere but would blur "of its own".
+    /// `^` of its own (whatever fixtures its cases need are fine). Erasing the blocks leaves
+    /// nothing to run, so `run`/`compile`/`build` pass over it in silence. Recorded before
+    /// the link, which merges an `^` from nowhere but would blur "of its own".
     pub tests_only: bool,
 }
 
@@ -97,7 +96,7 @@ pub enum TestBlocks {
     /// Leave them out of the compilation unit. `check`, `compile`, `build`, and `run` all
     /// take this path, so a file's tests are never checked, never emitted, and cannot
     /// reach a release binary.
-    Strip,
+    Erase,
     /// Compile them, under an entry point synthesized to run each block in order. What
     /// `quilon test` uses.
     Run,
@@ -111,7 +110,7 @@ pub const REPORTER_SUMMARY_FUNCTION: &str = "reportSummary";
 /// Read, lex, parse, resolve `<<` imports (relative to `file`'s directory), and
 /// type-check the program at `file`, leaving its test blocks out (see [`TestBlocks`]).
 pub fn front_end(file: &Path) -> Result<Checked, FrontEndError> {
-    front_end_with(file, TestBlocks::Strip)
+    front_end_with(file, TestBlocks::Erase)
 }
 
 /// [`front_end`], choosing what happens to the file's top-level `describe` blocks.
@@ -208,15 +207,7 @@ fn first_at_declaration(program: &ast::Program) -> Option<(&Span, &str)> {
 
 /// Whether `program` defines the `^` entry point required to build an executable.
 pub fn has_entry_point(program: &ast::Program) -> bool {
-    entry_point(program).is_some()
-}
-
-/// The program's `^` entry-point declaration, if it has one.
-fn entry_point(program: &ast::Program) -> Option<&ast::FunctionDeclaration> {
-    program.items.iter().find_map(|item| match item {
-        ast::Item::FunctionDeclaration(func) if func.name == "^" => Some(func),
-        _ => None,
-    })
+    defines_function(program, "^")
 }
 
 /// Whether `program` declares a top-level function called `name`.
@@ -225,6 +216,16 @@ fn defines_function(program: &ast::Program, name: &str) -> bool {
         .items
         .iter()
         .any(|item| matches!(item, ast::Item::FunctionDeclaration(func) if func.name == name))
+}
+
+/// Whether `item` claims the `^` name — as the entry-point function, or as a top-level
+/// binding that would collide with one.
+fn names_entry_point(item: &ast::Item) -> bool {
+    match item {
+        ast::Item::FunctionDeclaration(declaration) => declaration.name == "^",
+        ast::Item::VariableDeclaration(declaration) => declaration.name == "^",
+        _ => false,
+    }
 }
 
 /// The four nodes [`synthesize_test_entry`] builds, as the offsets that tell their spans
@@ -248,15 +249,14 @@ fn synthesized_span(node: Synthesized) -> Span {
 /// order, then the reporter's summary, whose `Num` result becomes the exit code.
 ///
 /// A file's tests may sit beside its code, `^` included, so the program reaching here may
-/// already define one. That `^` is the program's entry point, not the test run's: it is
-/// dropped, because this is the entry point now and two would collide on one symbol.
+/// already have something under that name. Whatever it is, it belongs to the program and not
+/// to the test run, and only one thing can carry the name: it is dropped, because the entry
+/// appended below is the entry point now.
 fn synthesize_test_entry(program: &mut ast::Program) -> Result<(), (Span, String)> {
     let Some(first_block) = program.test_blocks.first() else {
         return Ok(());
     };
-    program
-        .items
-        .retain(|item| !matches!(item, ast::Item::FunctionDeclaration(func) if func.name == "^"));
+    program.items.retain(|item| !names_entry_point(item));
     // The reporter has to be in scope, since the entry ends by calling it. Said here, at the
     // first test block, rather than by the type checker at the synthesized call — which has
     // no source location to point a diagnostic at.

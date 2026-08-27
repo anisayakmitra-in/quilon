@@ -1204,9 +1204,9 @@ quilon test    [path]       # run the test suites under a file or directory (def
 ```
 
 `quilon test` is JIT-only, and exits non-zero if any case failed. It runs a file's top-level
-`describe` blocks — which `check`, `compile`, `build`, and `run` erase, so tests may sit in the
-same file as the code they test (beside its `^` included) and still cost a release build
-nothing. See [`core.test`](corelib/test.md#the-test-harness).
+`describe` blocks, which every other command erases — so tests may sit in the file they test,
+its `^` included, and still cost a release build nothing. See
+[`core.test`](corelib/test.md#the-test-harness).
 
 `quilon build` emits an object file in-process and links it (with the Quilon runtime `libquilon_rt`, which carries the GC) into a native executable:
 ```bash

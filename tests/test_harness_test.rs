@@ -51,13 +51,14 @@ describe("arithmetic", () => <
 )
 "#;
 
-/// The line `examples/tests_alongside_code.qn` prints from inside a `describe` block. Nothing
-/// else in the repository prints it, so finding it in a build's output means the block ran.
+/// The line a `describe` block prints — in `examples/tests_alongside_code.qn` and in this
+/// file's fixtures. Nothing else in the repository prints it, so finding it in a build's
+/// output means a block that should have been erased ran.
 const ERASED_BLOCK_MARKER: &str = "ERASED-TEST-BLOCK-RAN";
 
-/// The line `examples/tests_alongside_code.qn` prints from its own `^`. Its presence is what
-/// tells a build that erased the test blocks apart from a build that never ran at all — and
-/// its ABSENCE under `quilon test` is what proves that `^` is not the test run's entry point.
+/// The line a program prints from its own `^`, beside its test blocks. Its presence is what
+/// tells a build that erased those blocks apart from a build that never ran at all — and its
+/// ABSENCE under `quilon test` is what proves that `^` is not the test run's entry point.
 const PROGRAM_MARKER: &str = "PROGRAM-RAN-WITHOUT-ITS-TEST-BLOCKS";
 
 /// The line `examples/use_tested_module.qn` prints from its `^`, so an importer's run is told
@@ -171,11 +172,11 @@ fn a_describe_definition_is_still_an_ordinary_item() {
     ));
 }
 
-// ── Stripping: what a release build does with a suite ───────────────────────────────────
+// ── Erasure: what a release build does with a suite ─────────────────────────────────────
 
 #[test]
 fn a_build_of_a_file_with_tests_omits_the_test_code() {
-    let dir = work_dir("strip");
+    let dir = work_dir("erase");
     let source = write(
         &dir,
         "mixed.qn",
@@ -215,34 +216,6 @@ fn a_build_of_a_file_with_tests_omits_the_test_code() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A program with its tests beside it, as source: an `^` that prints [`PROGRAM_MARKER`], and a
-/// `describe` block over the same function that prints [`ERASED_BLOCK_MARKER`]. Which line
-/// comes out says which halves of the file were compiled.
-fn program_with_tests_beside_it() -> String {
-    format!(
-        r#"
-<< core.io
-<< core.test
-
-double = (n :: Num) -> Num => n * 2
-
-describe("double", () => <
-  it("doubles", () => <
-    print("{ERASED_BLOCK_MARKER}")
-    assertEq(double(21), 42)
-  >
-  )
->
-)
-
-^ = () -> $ => <
-  print("{PROGRAM_MARKER}")
-  assertEq(double(4), 8)
->
-"#
-    )
-}
-
 /// The whole point, in three assertions: `out` is a run of a program whose file also holds test
 /// blocks, so it exits 0 having printed `marker` — which tells "the blocks were erased" apart
 /// from "nothing ran at all" — and no [`ERASED_BLOCK_MARKER`].
@@ -262,26 +235,6 @@ fn assert_ran_without_its_tests(what: &str, marker: &str, out: &Output) {
         "{what} ran a test block that should have been erased:\n{}",
         out.stdout
     );
-}
-
-/// The erasure, observed rather than inferred: the `describe` block's `print` never executes
-/// in a build of the file it sits in — under the JIT and a native build alike.
-#[test]
-fn a_describe_block_beside_an_entry_point_never_runs_in_a_build() {
-    let dir = work_dir("beside");
-    let source = write(&dir, "program.qn", &program_with_tests_beside_it());
-
-    let run = quilon(&["run", source.to_str().unwrap()]);
-    assert_ran_without_its_tests("`quilon run`", PROGRAM_MARKER, &run);
-
-    match available_linker() {
-        Some(linker) => {
-            let native = build_and_execute(&source, &dir, linker);
-            assert_ran_without_its_tests("the built program", PROGRAM_MARKER, &native);
-        }
-        None => eprintln!("skipping the native half: need a linker (`clang` or `gcc`) on PATH"),
-    }
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -310,18 +263,43 @@ fn a_file_that_is_only_tests_is_silently_ignored() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The other direction on that same file: `quilon test` compiles the blocks the build erased,
-/// and the file's own `^` is not the test run's entry point — the synthesized one is — so the
-/// program's line never appears.
+// ── Running: `quilon test` ─────────────────────────────────────────────────────────────
+
+/// The file's own `^` is not the test run's entry point — the synthesized one is — so the
+/// program's line never appears. Written with the `^` in the MIDDLE of the file, items after
+/// it, since dropping it must not disturb what follows: `helper` is declared below and the
+/// case that calls it still resolves.
 #[test]
-fn quilon_test_runs_the_blocks_beside_an_entry_point_and_ignores_it() {
+fn quilon_test_ignores_the_entry_point_beside_the_blocks_it_runs() {
     let dir = work_dir("beside_test");
-    let source = write(&dir, "program.qn", &program_with_tests_beside_it());
+    let source = write(
+        &dir,
+        "program.qn",
+        &format!(
+            r#"
+<< core.io
+<< core.test
+
+^ = () -> $ => print("{PROGRAM_MARKER}")
+
+helper = (n :: Num) -> Num => n * 2
+
+describe("helper", () => <
+  it("doubles", () => <
+    print("{ERASED_BLOCK_MARKER}")
+    assertEq(helper(21), 42)
+  >
+  )
+>
+)
+"#
+        ),
+    );
 
     let out = quilon(&["test", source.to_str().unwrap()]);
     assert_eq!(
         out.code, 0,
-        "the cases pass, so the suite must exit 0:\n{}\n{}",
+        "the case passes, so the suite must exit 0:\n{}\n{}",
         out.stdout, out.stderr
     );
     assert!(
@@ -336,8 +314,6 @@ fn quilon_test_runs_the_blocks_beside_an_entry_point_and_ignores_it() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
-
-// ── Running: `quilon test` ─────────────────────────────────────────────────────────────
 
 #[test]
 fn a_passing_suite_exits_zero_and_reports_every_case() {
@@ -404,14 +380,27 @@ fn a_directory_runs_every_suite_it_holds() {
     let dir = work_dir("dir");
     write(&dir, "green.qn", PASSING_SUITE);
     write(&dir, "red.qn", FAILING_SUITE);
+    // A program AND a suite: discovery goes by the blocks, so an `^` beside them is no reason
+    // to pass the file over — this is the shape the CI step relies on finding.
+    write(
+        &dir,
+        "mixed.qn",
+        concat!(
+            "<< core.test\n",
+            "describe(\"mixed\", () => it(\"runs\", () => assert(true)))\n",
+            "^ = () -> Num => 7\n"
+        ),
+    );
     // Not a suite: a program with no test blocks is passed over, not run.
     write(&dir, "program.qn", "^ = () -> Num => 7\n");
 
     let out = quilon(&["test", dir.to_str().unwrap()]);
     assert_ne!(out.code, 0, "one suite failed, so the run failed");
     assert!(
-        out.stdout.contains("green.qn") && out.stdout.contains("red.qn"),
-        "both suites should have run:\n{}",
+        out.stdout.contains("green.qn")
+            && out.stdout.contains("red.qn")
+            && out.stdout.contains("mixed.qn"),
+        "every suite should have run:\n{}",
         out.stdout
     );
     assert!(
@@ -420,7 +409,7 @@ fn a_directory_runs_every_suite_it_holds() {
         out.stdout
     );
     assert!(
-        out.stdout.contains("2 suites: 1 passed, 1 failed"),
+        out.stdout.contains("3 suites: 2 passed, 1 failed"),
         "unexpected per-file tally:\n{}",
         out.stdout
     );
@@ -625,8 +614,9 @@ fn the_shipped_example_runs_its_tests_under_quilon_test() {
     }
 }
 
-/// A program that imports a tested module gets its exports and none of its tests: the blocks
-/// are the module's own, dropped at the link rather than merged in.
+/// A program that imports a tested module gets its exports and nothing else of it: the blocks
+/// and the `^` are the module's own, dropped when the import is resolved rather than merged
+/// in. (The native build of this same example is the `examples/` JIT-AOT parity gate's.)
 #[test]
 fn the_shipped_program_importing_the_tested_module_gets_none_of_its_tests() {
     let program = example("use_tested_module.qn");

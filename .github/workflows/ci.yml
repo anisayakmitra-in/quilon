@@ -88,9 +88,10 @@ jobs:
       - name: Test
         run: cargo test --workspace --verbose
 
-      # The `.qn` suites: only `quilon test` compiles a `describe` block, so without this a
-      # type error inside one passes every other gate unnoticed. Exits non-zero if a case
-      # fails or a suite does not compile.
+      # The `.qn` suites. Only `quilon test` compiles a `describe` block, so a type error
+      # inside one passes every other gate; the Rust tests name today's suites one by one,
+      # while this covers any suite added to `examples/` without one. Exits non-zero if a
+      # case fails or a suite does not compile.
       - name: Quilon test suites
         run: ./target/debug/quilon test examples
 

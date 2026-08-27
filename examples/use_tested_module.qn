@@ -6,6 +6,6 @@
 
 ^ = () -> $ => <
   print("IMPORTER-RAN-WITHOUT-THE-MODULE-TEST-BLOCKS")
-  assertEq(slugify("  Hello World  "), "hello-world")
-  assertEq(wordCount("one two three"), 3)
+  assertEq(slugify("Imported And Used"), "imported-and-used")
+  assertEq(wordCount("four words right here"), 4)
 >

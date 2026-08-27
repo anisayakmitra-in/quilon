@@ -74,7 +74,7 @@ fn checked(file: &Path) -> driver::Checked {
 }
 
 /// [`checked`], exiting 0 without a word when the file is a test suite rather than a
-/// program. Stripping its blocks leaves nothing to run, so `run`, `compile`, and `build`
+/// program. Erasing its blocks leaves nothing to run, so `run`, `compile`, and `build`
 /// pass over it rather than reporting a missing `^`; `quilon test` is what runs it. Call it
 /// before printing anything, so the skip is silent.
 fn checked_program_to_emit(file: &Path) -> driver::Checked {

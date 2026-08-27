@@ -50,9 +50,9 @@ directly, and records, sum types, and arrays through their `` ` `` render operat
 ## The test harness
 
 A **suite** is any `.qn` file with top-level `describe(…)` blocks — a file of nothing but
-tests, or the module or program they test, with whatever fixtures the cases need. `quilon test`
-synthesizes the entry point that runs each block in order; every other command leaves the
-blocks out of the program. A case checks itself with the assertions above.
+tests, or the module or program they test ([below](#tests-beside-the-code-costing-a-release-build-nothing)),
+with whatever fixtures the cases need. `quilon test` synthesizes the entry point that runs
+each block in order. A case checks itself with the assertions above.
 
 ```quilon
 << core.test
@@ -130,8 +130,8 @@ or attribute:
 
 Never type-checking them cuts both ways: **a type error inside a `describe` block is invisible
 to `check`, `compile`, `build`, and `run`** — they erase the block before the checker sees it
-and succeed. Only `quilon test` compiles the blocks, and there a suite that fails to compile
-counts as a failed suite. **Run `quilon test` in CI**, or broken test code passes unnoticed.
+and succeed. Only `quilon test` compiles the blocks. **Run `quilon test` in CI**, or broken
+test code passes unnoticed.
 
 ### Reporters
 
