@@ -1,6 +1,7 @@
-~ core.test — assertions for self-verifying programs. Import with `<< core.test`.
+~ core.test — assertions and the test harness. Import with `<< core.test`.
 ~ Reference: docs/corelib/test.md.
 ~
+~ ── Assertions ─────────────────────────────────────────────────────────────────────
 ~ A failing assertion reports at YOUR call site, then exits 101.
 ~
 ~   assert(cond)          on a false `cond`, report a default message and exit 101;
@@ -17,6 +18,24 @@
 ~                         caller by taking a trailing `site :: Site` and forwarding it:
 ~                           assertEven = (n :: Num, site :: Site) -> $ =>
 ~                             n % 2 == 0 ? $ : failAt("`n` is odd", site)
+~
+~ ── The harness ────────────────────────────────────────────────────────────────────
+~ `quilon test` runs a file's top-level `describe` blocks; every other command compiles
+~ the file without them. A test file has no `^`. A case asserts with the assertions
+~ above, so the first failure ends its suite — see docs/corelib/test.md.
+~
+~   describe(name, body)  group of cases (nestable). `body` is a `() -> $` closure.
+~   it(name, body)        one case, reported once it has run.
+~
+~   describe("trimming", () => <
+~     it("drops both ends", () => assertEq("  x  ".trim(), "x"))
+~   >)
+~
+~ ── Reporters ──────────────────────────────────────────────────────────────────────
+~ What a run looks like is decided here, not in the compiler: the harness records what
+~ happened through the reporter-agnostic registry (`__test_*`) and renders through the
+~ `report*` functions below. A reporter of your own defines the same three, and the
+~ entry `quilon test` synthesizes calls `reportSummary()` last, for the exit code.
 << core.io
 
 ~ Options record for `assert`; `message` is the text reported on failure.
@@ -92,3 +111,47 @@
 ~ Assert a Result is `NotOk`; fail on `Ok`.
 >> assertNotOk = (r :: Result, site :: Site) -> $ =>
   r ? | Ok(_) => failAt("assertion failed: expected NotOk, got Ok", site) | NotOk(_) => $
+
+~ ── The default reporter ───────────────────────────────────────────────────────────
+
+~ Two spaces per level of `describe` nesting.
+>> indent = (depth :: Num) -> Text => "  ".repeat(depth)
+
+~ `text` in green — plain when stdout is not a terminal that wants color.
+>> green = (text :: Text) -> Text =>
+  __color_enabled(stdout) ? "\e[32m`text`\e[0m" : text
+
+~ A `describe` group was entered, at `depth` (1 for an outermost group).
+>> reportSuite = (name :: Text, depth :: Num) -> $ => print("`indent(depth - 1)``name`")
+
+~ A case ran to completion, at `depth`.
+>> reportCase = (name :: Text, depth :: Num) -> $ =>
+  print("`indent(depth)``green("✓")` `name`")
+
+~ The run's total, and its exit code. Only ever reached when every case passed: a failing
+~ assertion exits 101 from where it failed, so a run that gets here had no failures. The
+~ synthesized entry point ends with this call, so what it returns IS the process status.
+>> reportSummary = () -> Num => <
+  print("")
+  print(green("`__test_passed()` cases passed"))
+  0
+>
+
+~ ── describe / it ──────────────────────────────────────────────────────────────────
+
+~ A group of cases, nestable. `body` runs immediately; the group is only there to name
+~ and indent what it contains.
+>> describe = (name :: Text, body :: () -> $) -> $ => <
+  depth = __test_suite_enter()
+  reportSuite(name, depth)
+  body()
+  __test_suite_leave()
+  $
+>
+
+~ One case, reported once `body` has run. A failing assertion inside `body` reports and
+~ exits before that, so a reported case is one that passed.
+>> it = (name :: Text, body :: () -> $) -> $ => <
+  body()
+  reportCase(name, __test_case_passed())
+>

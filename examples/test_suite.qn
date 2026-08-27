@@ -1,0 +1,32 @@
+~ A test suite: `describe` groups and `it` cases from `core.test`, each case checking
+~ itself with the module's assertions.
+~
+~ Run: cargo run -- test examples/test_suite.qn    ~ exits 0 — every case passes
+~
+~ There is no `^` here — a file of nothing but tests. A top-level `describe(…)` is test code:
+~ `quilon test` synthesizes the entry point that runs each block in order, and every other
+~ command leaves the blocks out of the program entirely.
+<< core.test
+
+describe("Text", () => <
+  it("trims both ends", () => assertEq("  padded  ".trim(), "padded"))
+  it("finds a part", () => assert("haystack".contains("stack")))
+  it("counts graphemes, not bytes", () => assertEq("héllo".length, 5))
+
+  ~ `describe` nests: the reporter indents by depth.
+  describe("splitting", () => <
+    it("splits on a separator", () => assertEq("a,b,c".split(",").size, 3))
+    it("keeps the whole text when the separator is absent", () =>
+      assertEq("a,b,c".split(";").size, 1))
+  >)
+>)
+
+describe("Num", () => <
+  it("adds", () => assertEq(2 + 2, 4))
+  it("compares", () => assert(7 > 3))
+>)
+
+describe("Result", () => <
+  it("is Ok in bounds", () => assertOk([10, 20].at(0)))
+  it("is NotOk out of bounds", () => assertNotOk([10, 20].at(9)))
+>)

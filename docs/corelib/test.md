@@ -1,6 +1,13 @@
-# `core.test` — Assertions
+# `core.test` — Assertions and the test harness
 
-Import with `<< core.test`. See the [corelib index](../LANGUAGE.md#corelib) and `examples/assert_demo.qn`.
+Import with `<< core.test`. See the [corelib index](../LANGUAGE.md#corelib),
+`examples/assert_demo.qn`, and `examples/test_suite.qn`.
+
+**Assertions** (`assert`, `assertEq`, …) make a program verify itself as it runs, exiting
+`101` at the first failure — what every example in `examples/` uses. The **harness**
+(`describe`, `it`) groups those checks into named cases that `quilon test` runs and reports.
+
+## Assertions
 
 In-language assertions for **self-verifying programs and examples**. A holding assertion does
 nothing; a failing one reports to stderr and exits **101** (the Rust-panic convention), so a
@@ -39,3 +46,96 @@ rather than `^`.
 [rendered](../LANGUAGE.md#string-interpolation-and-the-render-operator-) — `Num`/`Text`/`Bool`
 directly, and records, sum types, and arrays through their `` ` `` render operator. (See
 `examples/assert_demo.qn`.)
+
+## The test harness
+
+A **suite** is any `.qn` file with top-level `describe(…)` blocks — a file of nothing but
+tests, or the module or program they test ([below](#tests-beside-the-code-costing-a-release-build-nothing)),
+with whatever fixtures the cases need. `quilon test` synthesizes the entry point that runs
+each block in order. A case checks itself with the assertions above.
+
+```quilon
+<< core.test
+
+describe("Text", () => <
+  it("trims both ends", () => assertEq("  padded  ".trim(), "padded"))
+  it("finds a part", () => assert("haystack".contains("stack")))
+
+  describe("splitting", () => <
+    it("splits on a separator", () => assertEq("a,b,c".split(",").size, 3))
+  >)
+>)
+```
+
+```bash
+quilon test                    # every suite under the current directory
+quilon test tests/text.qn      # one file
+quilon test tests/             # one directory
+```
+
+```
+tests/text.qn
+Text
+  ✓ trims both ends
+  ✓ finds a part
+  splitting
+    ✓ splits on a separator
+
+3 cases passed
+```
+
+| Function | Effect |
+|----------|--------|
+| `describe(name :: Text, body :: () -> $) -> $` | A group of cases. Nestable — the report indents by depth. `body` runs immediately. |
+| `it(name :: Text, body :: () -> $) -> $` | One case, reported once `body` has run. |
+
+The **exit code** is 0 only when every case in every suite passed, so `quilon test` drops
+straight into CI. A suite that fails to compile — or to parse — counts as a failed suite.
+
+The case tree and the summary go to **stdout**; a failing assertion's
+[error frame](../LANGUAGE.md#error-messages) goes to **stderr**, like every other compiler
+diagnostic, so each stream reads on its own when they are captured separately.
+
+Suites run one process each, so a failure in one does not stop the others.
+
+### A failing case ends its suite
+
+The assertions are fail-fast: the first failure reports and exits 101. Within a suite, that
+means the failing case and everything after it go unreported, and no summary is printed — the
+frame naming `file:line:column` is what identifies the failure. A suite therefore reports
+"all N passed" or stops where it broke; there is no "N passed, M failed" tally across cases
+yet. (A matcher API that reports every failing case is the next step here.)
+
+### Tests beside the code, costing a release build nothing
+
+Tests may sit in the same file as the code they test — beside its `>>` exports, beside its `^`,
+or both, as in `examples/tests_alongside_code.qn`. `describe` is the marker; there is no `cfg`
+or attribute:
+
+- `check`, `compile`, `build`, `run`: every top-level `describe(…)` is **erased** before the
+  checker sees it, so nothing of the harness is type-checked, emitted, or linked. The file's
+  own `^` is its entry point and behaves exactly as it would without the blocks. A file whose
+  blocks are all it has is no program at all — `compile`, `build`, and `run` pass over it in
+  silence rather than reporting a missing entry point.
+- `quilon test`: the blocks are **compiled and run**, under the entry point it synthesizes. A
+  file's own `^` is not the test run's, so it is ignored rather than called.
+
+Never type-checking them cuts both ways: **a type error inside a `describe` block is invisible
+to `check`, `compile`, `build`, and `run`** — they erase the block before the checker sees it
+and succeed. Only `quilon test` compiles the blocks. **Run `quilon test` in CI**, or broken
+test code passes unnoticed.
+
+### Reporters
+
+What a run looks like is decided in `.qn`, not in the compiler. `describe` and `it` record
+what happened through a reporter-agnostic registry of `__test_*` primitives — nesting depth
+and a count, no rendering — and all rendering lives in three functions `core.test` exports:
+
+| Function | Called when |
+|----------|-------------|
+| `reportSuite(name :: Text, depth :: Num) -> $` | A `describe` group is entered. |
+| `reportCase(name :: Text, depth :: Num) -> $` | A case has run. |
+| `reportSummary() -> Num` | Last, from the synthesized entry point. Prints the total and returns the exit code. |
+
+A reporter of its own defines the same three; selecting it is a matter of pointing the
+synthesized entry at another module's `reportSummary`.

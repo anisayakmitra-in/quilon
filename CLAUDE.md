@@ -54,14 +54,19 @@ a corpus when a change has a cost profile the existing ones don't cover.
 
 ## Compiling & running `.qn` programs
 
-All four subcommands share one front-end (`src/driver.rs`): read → lex → parse → resolve `<<` imports → typecheck.
+Every subcommand shares one front-end (`src/driver.rs`): read → lex → parse → resolve `<<` imports → typecheck.
 
 ```bash
 cargo run -- check   examples/hello_world.qn   # front-end only
 cargo run -- run     examples/hello_world.qn   # front-end + JIT execute (in-process LLVM)
 cargo run -- build   examples/hello_world.qn   # native executable (see below)
 cargo run -- compile examples/hello_world.qn   # emit LLVM IR -> .ll (for inspection)
+cargo run -- test    examples/test_suite.qn    # run a test suite (JIT only; default path: .)
 ```
+
+`quilon test` runs a file's top-level `describe(...)` blocks under a synthesized `^`; every
+other subcommand erases them, so tests may live in the file they test. `src/test_command.rs`
+is the runner; `docs/corelib/test.md` is the reference.
 
 `quilon run` is implemented (in-process JIT). A program's `^` entry point return value is its exit code (e.g. `factorial(5)` → 120) — this is how most run tests verify behavior. (The exit code is the `^` body's `Num` value, or 0 if the body isn't a `Num`.)
 

@@ -78,6 +78,14 @@ const EVERY_INTRINSIC: &str = r#"
   written = "bytes" |> write(stdout)
   assert(written == 5)
 
+  ~ The test registry, which `core.test`'s describe/it record through. Called directly,
+  ~ because `quilon test` is the only thing that compiles a `describe` block and this gate
+  ~ is an ordinary program: one group, one case in it, and the total.
+  assertEq(__test_suite_enter(), 1)
+  assertEq(__test_case_passed(), 1)
+  assert(__test_passed() >= 1)
+  assertEq(__test_suite_leave(), 0)
+
   ~ __text_cmp and __text_length.
   assert("abc" < "abd")
   assertEq("héllo".length, 5)

@@ -7,7 +7,17 @@ use std::rc::Rc;
 pub struct Program {
     pub imports: Vec<Import>,
     pub items: Vec<Item>,
+    /// Top-level [`TEST_BLOCK_MARKER`] calls — `describe("…", () => < … >)` — kept apart
+    /// from `items` because they are TEST code: `quilon test` synthesizes an entry point
+    /// that runs them in order, and every other command ignores this field, which is what
+    /// keeps a test suite out of a release build.
+    pub test_blocks: Vec<Expression>,
 }
+
+/// The name whose top-level call marks test code: `describe`. There is no attribute or
+/// `cfg` syntax — the symbol IS the marker, so a file's tests are recognizable by the
+/// parser (see `Parser::parse_program`) with no annotation to keep in sync.
+pub const TEST_BLOCK_MARKER: &str = "describe";
 
 /// A module import: `<< core.io` (built-in dotted) or `<< "path/to/mod.qn"` (file path).
 /// NOTE: parsing of imports is implemented in Workstream B1; for now `imports` is always empty.
@@ -208,7 +218,46 @@ pub const BUILTIN_OVERLOADS: &[BuiltinOverload] = &[
         parameters: &[Type::Num],
         ret: Type::Bool,
     },
+    // The test registry (see `is_test_registry_intrinsic`): the harness's event sink, which
+    // `core.test`'s `describe` and `it` drive. Enter and leave a `describe` group, each
+    // yielding the resulting nesting depth; count a case that ran to completion, yielding
+    // the depth to indent it at; and read the total back for the summary.
+    BuiltinOverload {
+        name: "__test_suite_enter",
+        parameters: &[],
+        ret: Type::Num,
+    },
+    BuiltinOverload {
+        name: "__test_suite_leave",
+        parameters: &[],
+        ret: Type::Num,
+    },
+    BuiltinOverload {
+        name: "__test_case_passed",
+        parameters: &[],
+        ret: Type::Num,
+    },
+    BuiltinOverload {
+        name: "__test_passed",
+        parameters: &[],
+        ret: Type::Num,
+    },
 ];
+
+/// The prefix marking a test-registry primitive.
+const TEST_REGISTRY_PREFIX: &str = "__test_";
+
+/// Whether `name` is one of the test registry's primitives — the event sink behind
+/// `core.test`'s `describe` and `it`, listed among the [`BUILTIN_OVERLOADS`] above. The
+/// registry counts and nests; it renders nothing, so a reporter is free to render however it
+/// likes (see `docs/corelib/test.md`).
+///
+/// Every one takes no arguments and yields a `Num`, which is what lets codegen lower the
+/// whole family through this one predicate. `__`-prefixed and exported by no module for the
+/// same reason as `__exit`: they are the harness's plumbing, not user-facing surface.
+pub fn is_test_registry_intrinsic(name: &str) -> bool {
+    name.starts_with(TEST_REGISTRY_PREFIX)
+}
 
 /// Whether the compiler provides built-in members for `name`, so a single user definition
 /// of it already forms an overload set (rather than being an ordinary function).
@@ -817,5 +866,29 @@ pub fn type_label(ty: &Type) -> String {
         }
         Type::Generic { .. } => "<unknown>".to_string(),
         other => format!("{:?}", other),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_test_registry_primitive_is_a_zero_argument_num_builtin() {
+        // Codegen lowers the whole family through one path, which only works while they all
+        // share that signature.
+        let registry: Vec<&BuiltinOverload> = BUILTIN_OVERLOADS
+            .iter()
+            .filter(|member| is_test_registry_intrinsic(member.name))
+            .collect();
+        assert!(!registry.is_empty(), "the registry has no members at all");
+        for member in registry {
+            assert!(
+                member.parameters.is_empty(),
+                "`{}` must take no arguments",
+                member.name
+            );
+            assert_eq!(member.ret, Type::Num, "`{}` must yield a Num", member.name);
+        }
     }
 }
