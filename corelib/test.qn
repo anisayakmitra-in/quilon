@@ -29,8 +29,7 @@
 ~
 ~   describe("trimming", () => <
 ~     it("drops both ends", () => assertEq("  x  ".trim(), "x"))
-~   >
-~   )
+~   >)
 ~
 ~ ── Reporters ──────────────────────────────────────────────────────────────────────
 ~ What a run looks like is decided here, not in the compiler: the harness records what

@@ -15,22 +15,18 @@
 describe("slugify", () => <
   it("lowercases and hyphenates", () => assertEq(slugify("  Hello World  "), "hello-world"))
   it("leaves one lowercase word alone", () => assertEq(slugify("quilon"), "quilon"))
->
-)
+>)
 
 describe("wordCount", () => <
   it("counts the words of a line", () => assertEq(wordCount(" one two three "), 3))
->
-)
+>)
 
 describe("the erased block", () => <
   it("runs under quilon test and nowhere else", () => <
     print("ERASED-TEST-BLOCK-RAN")
     assertEq(slugify("Both Halves"), "both-halves")
-  >
-  )
->
-)
+  >)
+>)
 
 ^ = () -> $ => <
   print("PROGRAM-RAN-WITHOUT-ITS-TEST-BLOCKS")

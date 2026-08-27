@@ -27,15 +27,12 @@ describe("numbers", () => <
 
   describe("nested", () => <
     it("still runs", () => assert(true))
-  >
-  )
->
-)
+  >)
+>)
 
 describe("text", () => <
   it("contains", () => assert("haystack".contains("stack")))
->
-)
+>)
 "#;
 
 /// A passing case, then a failing one, then another that would pass. The assertions are
@@ -47,8 +44,7 @@ describe("arithmetic", () => <
   it("holds", () => assertEq(2 + 2, 4))
   it("does not hold", () => assertEq(2 + 2, 5))
   it("never reached", () => assertEq("after", "after"))
->
-)
+>)
 "#;
 
 /// The line a `describe` block prints — in `examples/tests_alongside_code.qn` and in this
@@ -182,8 +178,7 @@ fn a_build_of_a_file_with_tests_omits_the_test_code() {
             "double = (n :: Num) -> Num => n * 2\n",
             "describe(\"double\", () => <\n",
             "  it(\"doubles\", () => assertEq(double(21), 42))\n",
-            ">\n",
-            ")\n",
+            ">)\n",
             "^ = () -> Num => double(0)\n"
         ),
     );
@@ -284,10 +279,8 @@ describe("helper", () => <
   it("doubles", () => <
     print("{ERASED_BLOCK_MARKER}")
     assertEq(helper(21), 42)
-  >
-  )
->
-)
+  >)
+>)
 "#
         ),
     );
@@ -510,8 +503,7 @@ fn a_module_with_exports_and_tests_but_no_entry_point_is_not_a_program() {
             ">> double = (n :: Num) -> Num => n * 2\n",
             "describe(\"double\", () => <\n",
             "  it(\"doubles\", () => assertEq(double(21), 42))\n",
-            ">\n",
-            ")\n"
+            ">)\n"
         ),
     );
 

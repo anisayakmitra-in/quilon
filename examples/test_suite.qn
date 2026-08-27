@@ -18,19 +18,15 @@ describe("Text", () => <
     it("splits on a separator", () => assertEq("a,b,c".split(",").size, 3))
     it("keeps the whole text when the separator is absent", () =>
       assertEq("a,b,c".split(";").size, 1))
-  >
-  )
->
-)
+  >)
+>)
 
 describe("Num", () => <
   it("adds", () => assertEq(2 + 2, 4))
   it("compares", () => assert(7 > 3))
->
-)
+>)
 
 describe("Result", () => <
   it("is Ok in bounds", () => assertOk([10, 20].at(0)))
   it("is NotOk out of bounds", () => assertNotOk([10, 20].at(9)))
->
-)
+>)

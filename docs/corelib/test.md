@@ -63,10 +63,8 @@ describe("Text", () => <
 
   describe("splitting", () => <
     it("splits on a separator", () => assertEq("a,b,c".split(",").size, 3))
-  >
-  )
->
-)
+  >)
+>)
 ```
 
 ```bash
@@ -107,12 +105,6 @@ means the failing case and everything after it go unreported, and no summary is 
 frame naming `file:line:column` is what identifies the failure. A suite therefore reports
 "all N passed" or stops where it broke; there is no "N passed, M failed" tally across cases
 yet. (A matcher API that reports every failing case is the next step here.)
-
-### Blocks as arguments
-
-A `< >` block closes on a [line-final `>`](../LANGUAGE.md#expressions), so a lambda
-with a block body puts the call's closing `)` on the next line. Writing each `it` as a single
-expression keeps that to the `describe` alone.
 
 ### Tests beside the code, costing a release build nothing
 
