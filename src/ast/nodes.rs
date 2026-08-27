@@ -19,6 +19,11 @@ pub struct Program {
 /// parser (see `Parser::parse_program`) with no annotation to keep in sync.
 pub const TEST_BLOCK_MARKER: &str = "describe";
 
+/// The name of a test CASE, written `it("…", () => …)`. A recorded assertion belongs
+/// inside one: `it` is what closes a case and tallies it, so an `expect` anywhere else in
+/// a suite would set a failure mark nothing ever reports.
+pub const TEST_CASE_MARKER: &str = "it";
+
 /// A module import: `<< core.io` (built-in dotted) or `<< "path/to/mod.qn"` (file path).
 /// NOTE: parsing of imports is implemented in Workstream B1; for now `imports` is always empty.
 #[derive(Debug, Clone, PartialEq)]
@@ -153,8 +158,8 @@ pub struct BuiltinOverload {
 /// these names ADDS a member to its set rather than shadowing the built-in, and dispatch
 /// picks by exact argument types like any other set.
 ///
-/// The `__`-prefixed entries are internal primitives (`core.test` builds its `assert` on
-/// them) that no module exports and no `.qn` declares. They are members on the same terms
+/// The `__`-prefixed entries are internal primitives (`core.test`'s harness and reporter
+/// are built on them) that no module exports and no `.qn` declares. They are members on the same terms
 /// all the same, so the one rule covers them too.
 ///
 /// This is the single table the type checker registers from, codegen mangles and dispatches
@@ -219,9 +224,11 @@ pub const BUILTIN_OVERLOADS: &[BuiltinOverload] = &[
         ret: Type::Bool,
     },
     // The test registry (see `is_test_registry_intrinsic`): the harness's event sink, which
-    // `core.test`'s `describe` and `it` drive. Enter and leave a `describe` group, each
-    // yielding the resulting nesting depth; count a case that ran to completion, yielding
-    // the depth to indent it at; and read the total back for the summary.
+    // `core.test`'s `describe`/`it` and the provided `expect` drive. Enter and leave a
+    // `describe` group, each yielding the resulting nesting depth; read that depth without
+    // moving it; ask whether the running case has already failed; close a case, yielding the
+    // depth to indent it at; and read the two totals back for the summary. `core.test` wraps
+    // the three read-only ones as named `.qn` functions, which is the reporter's API.
     BuiltinOverload {
         name: "__test_suite_enter",
         parameters: &[],
@@ -233,7 +240,17 @@ pub const BUILTIN_OVERLOADS: &[BuiltinOverload] = &[
         ret: Type::Num,
     },
     BuiltinOverload {
-        name: "__test_case_passed",
+        name: "__test_depth",
+        parameters: &[],
+        ret: Type::Num,
+    },
+    BuiltinOverload {
+        name: "__test_case_failing",
+        parameters: &[],
+        ret: Type::Num,
+    },
+    BuiltinOverload {
+        name: "__test_case_finish",
         parameters: &[],
         ret: Type::Num,
     },
@@ -242,7 +259,50 @@ pub const BUILTIN_OVERLOADS: &[BuiltinOverload] = &[
         parameters: &[],
         ret: Type::Num,
     },
+    BuiltinOverload {
+        name: "__test_failed",
+        parameters: &[],
+        ret: Type::Num,
+    },
 ];
+
+/// The two assertion entry points the compiler provides. Both take the value under test and
+/// a matcher (see [`MATCHERS`]); they differ only in what a failure does — `assert` reports
+/// and exits, `expect` reports, marks the case failed, and lets the suite carry on.
+pub const ASSERT: &str = "assert";
+pub const EXPECT: &str = "expect";
+
+/// The matchers the compiler provides, in the only position they mean anything: the second
+/// argument of an [`ASSERT`]/[`EXPECT`] call. Elsewhere these are ordinary names, free for a
+/// program to use.
+///
+/// Compiler-provided rather than written in `.qn` because a matcher holds a value of the type
+/// under test, which without generics would need one matcher type per value type. `not` takes
+/// a matcher and negates it; the rest take the value they compare against, or nothing.
+pub const MATCHERS: &[&str] = &["equals", "contains", "not", "isOk", "isNotOk"];
+
+/// Whether `name` is `assert` or `expect` — a call the compiler lowers itself.
+pub fn is_assertion(name: &str) -> bool {
+    name == ASSERT || name == EXPECT
+}
+
+/// Whether `name` is one of the provided [`MATCHERS`].
+pub fn is_matcher(name: &str) -> bool {
+    MATCHERS.contains(&name)
+}
+
+/// The sum variant `isOk()` / `isNotOk()` asks about, or `None` for a matcher that reads no
+/// variant. Shared by the checker (which requires the value's type to carry that variant) and
+/// codegen (which compares against its tag), so the two can never disagree — and named
+/// exhaustively, so a matcher added later has to say what it reads rather than inheriting
+/// `NotOk`.
+pub fn matcher_variant(matcher: &str) -> Option<&'static str> {
+    match matcher {
+        "isOk" => Some("Ok"),
+        "isNotOk" => Some("NotOk"),
+        _ => None,
+    }
+}
 
 /// The prefix marking a test-registry primitive.
 const TEST_REGISTRY_PREFIX: &str = "__test_";
@@ -355,7 +415,7 @@ pub fn site_type() -> Type {
 /// receive its CALLER's location. A trailing `Site` parameter left off at a call site is
 /// filled in by the compiler with that call's `file:line:column`; passing one explicitly
 /// forwards the caller's own site instead, which is how a location propagates through a
-/// chain of wrappers (`assertEq` -> `assert`).
+/// chain of wrappers (a check of your own forwarding its `site` to `failAt`).
 pub fn is_site_type(ty: &Type) -> bool {
     matches!(ty, Type::Named { name, .. } if name == SITE_TYPE_NAME)
 }

@@ -1,11 +1,12 @@
 //! The in-language test framework: `quilon test`, and what a top-level `describe` block does
 //! to every other command.
 //!
-//! Two halves, and both matter. A suite has to run — report each case, and exit non-zero
-//! when one failed. And a suite has to cost a release build nothing: the blocks are not part
-//! of the compilation unit, so `run`/`compile`/`build` neither check them nor emit them, and
-//! a file that is only tests is not a program at all. Both halves apply to ONE file: tests
-//! may sit beside the code they test, `^` included, which is where the two meet.
+//! Two halves, and both matter. A suite has to run — report each case whichever way it went,
+//! tally them, and exit non-zero when one failed. And a suite has to cost a release build
+//! nothing: the blocks are not part of the compilation unit, so `run`/`compile`/`build`
+//! neither check them nor emit them, and a file that is only tests is not a program at all.
+//! Both halves apply to ONE file: tests may sit beside the code they test, `^` included,
+//! which is where the two meet.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -19,31 +20,31 @@ use common::{ensure_runtime_lib, tool_available};
 
 /// A passing suite: two groups, one nested inside the other.
 const PASSING_SUITE: &str = r#"
-<< core.test
+<< core.test.report
 
 describe("numbers", () => <
-  it("adds", () => assertEq(1 + 1, 2))
-  it("orders", () => assert(2 > 1))
+  it("adds", () => expect(1 + 1, equals(2)))
+  it("orders", () => expect(2 > 1, equals(true)))
 
   describe("nested", () => <
-    it("still runs", () => assert(true))
+    it("still runs", () => expect(true, equals(true)))
   >)
 >)
 
 describe("text", () => <
-  it("contains", () => assert("haystack".contains("stack")))
+  it("contains", () => expect("haystack", contains("stack")))
 >)
 "#;
 
-/// A passing case, then a failing one, then another that would pass. The assertions are
-/// fail-fast, so the third never runs — which is what the report has to reflect.
+/// A passing case, then a failing one, then another that passes. A failed `expect` marks its
+/// own case and nothing else, so the third case still runs and the summary tallies both ways.
 const FAILING_SUITE: &str = r#"
-<< core.test
+<< core.test.report
 
 describe("arithmetic", () => <
-  it("holds", () => assertEq(2 + 2, 4))
-  it("does not hold", () => assertEq(2 + 2, 5))
-  it("never reached", () => assertEq("after", "after"))
+  it("holds", () => expect(2 + 2, equals(4)))
+  it("does not hold", () => expect(2 + 2, equals(5)))
+  it("runs after the failure", () => expect("after", equals("after")))
 >)
 "#;
 
@@ -141,7 +142,8 @@ fn build_and_execute(source: &Path, directory: &Path, linker: &str) -> Output {
 
 #[test]
 fn a_top_level_describe_call_parses_as_a_test_block() {
-    let tokens = Lexer::tokenize("<< core.test\ndescribe(\"g\", () => 0)\n").expect("lexing");
+    let tokens =
+        Lexer::tokenize("<< core.test.report\ndescribe(\"g\", () => 0)\n").expect("lexing");
     let program = parser::parse(&tokens).expect("parsing");
     assert_eq!(program.test_blocks.len(), 1);
     assert!(
@@ -153,8 +155,8 @@ fn a_top_level_describe_call_parses_as_a_test_block() {
 
 #[test]
 fn a_describe_definition_is_still_an_ordinary_item() {
-    // `core.test` DEFINES `describe`, and a program may define its own — only a CALL is
-    // the marker, so the two are told apart by what follows the name.
+    // `core.test.report` DEFINES `describe`, and a program may define its own — only a CALL
+    // is the marker, so the two are told apart by what follows the name.
     let tokens = Lexer::tokenize("describe = (n :: Num) -> Num => n\n").expect("lexing");
     let program = parser::parse(&tokens).expect("parsing");
     assert!(program.test_blocks.is_empty());
@@ -173,11 +175,11 @@ fn a_build_of_a_file_with_tests_omits_the_test_code() {
         &dir,
         "mixed.qn",
         concat!(
-            "<< core.test\n",
+            "<< core.test.report\n",
             "<< core.io\n",
             "double = (n :: Num) -> Num => n * 2\n",
             "describe(\"double\", () => <\n",
-            "  it(\"doubles\", () => assertEq(double(21), 42))\n",
+            "  it(\"doubles\", () => expect(double(21), equals(42)))\n",
             ">)\n",
             "^ = () -> Num => double(0)\n"
         ),
@@ -269,7 +271,7 @@ fn quilon_test_ignores_the_entry_point_beside_the_blocks_it_runs() {
         &format!(
             r#"
 << core.io
-<< core.test
+<< core.test.report
 
 ^ = () -> $ => print("{PROGRAM_MARKER}")
 
@@ -278,7 +280,7 @@ helper = (n :: Num) -> Num => n * 2
 describe("helper", () => <
   it("doubles", () => <
     print("{ERASED_BLOCK_MARKER}")
-    assertEq(helper(21), 42)
+    expect(helper(21), equals(42))
   >)
 >)
 "#
@@ -292,7 +294,7 @@ describe("helper", () => <
         out.stdout, out.stderr
     );
     assert!(
-        out.stdout.contains(ERASED_BLOCK_MARKER) && out.stdout.contains("1 cases passed"),
+        out.stdout.contains(ERASED_BLOCK_MARKER) && out.stdout.contains("1 passed, 0 failed"),
         "the block beside `^` did not run:\n{}",
         out.stdout
     );
@@ -323,7 +325,7 @@ fn a_passing_suite_exits_zero_and_reports_every_case() {
         );
     }
     assert!(
-        out.stdout.contains("4 cases passed"),
+        out.stdout.contains("4 passed, 0 failed"),
         "unexpected summary:\n{}",
         out.stdout
     );
@@ -331,22 +333,29 @@ fn a_passing_suite_exits_zero_and_reports_every_case() {
 }
 
 #[test]
-fn a_failing_case_exits_non_zero_and_ends_the_run_where_it_failed() {
+fn a_failing_case_exits_non_zero_and_the_run_carries_on() {
     let dir = work_dir("fail");
     let source = write(&dir, "suite.qn", FAILING_SUITE);
     let out = quilon(&["test", source.to_str().unwrap()]);
 
     assert_ne!(out.code, 0, "a failing suite must exit non-zero");
-    // Cases before the failure are reported; the failing one and everything after it are
-    // not, the assertions being fail-fast. And no summary: the run never got there.
+    // Every case is reported — a failed `expect` marks its own case and nothing else — and
+    // the summary tallies both ways round.
+    for case in ["holds", "does not hold", "runs after the failure"] {
+        assert!(
+            out.stdout.contains(case),
+            "`{case}` is missing from the report:\n{}",
+            out.stdout
+        );
+    }
     assert!(
-        out.stdout.contains("holds"),
-        "the case before the failure should have been reported:\n{}",
+        out.stdout.contains("✓ holds") && out.stdout.contains("✗ does not hold"),
+        "each case must be marked as it went:\n{}",
         out.stdout
     );
     assert!(
-        !out.stdout.contains("never reached") && !out.stdout.contains("cases passed"),
-        "a fail-fast run must not report past the failure:\n{}",
+        out.stdout.contains("2 passed, 1 failed"),
+        "unexpected summary:\n{}",
         out.stdout
     );
     // The failure itself is reported in the compiler's own diagnostic format, on stderr,
@@ -364,6 +373,316 @@ fn a_failing_case_exits_non_zero_and_ends_the_run_where_it_failed() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The isolation mechanism: the first failing `expect` in a case skips what is LEFT of that
+/// case — the later assertions never run, so their subjects are never even evaluated — while
+/// the next case starts clean.
+#[test]
+fn a_failed_expect_skips_the_rest_of_its_case() {
+    let dir = work_dir("skip");
+    let source = write(
+        &dir,
+        "suite.qn",
+        concat!(
+            "<< core.test.report\n",
+            "describe(\"skipping\", () => <\n",
+            "  it(\"stops at the first failure\", () => <\n",
+            "    expect(1, equals(2))\n",
+            "    expect(3, equals(4))\n",
+            "  >)\n",
+            "  it(\"starts clean\", () => expect(5, equals(5)))\n",
+            ">)\n"
+        ),
+    );
+    let out = quilon(&["test", source.to_str().unwrap()]);
+
+    assert_ne!(out.code, 0);
+    assert_eq!(
+        out.stderr.matches("assertion failed").count(),
+        1,
+        "only the first failing expect in a case may report:\n{}",
+        out.stderr
+    );
+    assert!(
+        out.stderr.contains("expected 2, got 1") && !out.stderr.contains("expected 4, got 3"),
+        "the assertions after the failure must not have run:\n{}",
+        out.stderr
+    );
+    assert!(
+        out.stdout.contains("✓ starts clean") && out.stdout.contains("1 passed, 1 failed"),
+        "the next case must be unaffected:\n{}",
+        out.stdout
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `expect` records with the reporter, which only a `describe` block has — so outside one it
+/// is a compile error naming `assert` instead, rather than a program that silently drops its
+/// failures. (`describe` blocks are stripped from every command but `quilon test`.)
+#[test]
+fn expect_outside_a_describe_block_is_a_compile_error() {
+    let dir = work_dir("expect_outside");
+    let source = write(
+        &dir,
+        "program.qn",
+        "^ = () -> $ => <\n  expect(1, equals(1))\n>\n",
+    );
+    for command in ["check", "run", "build"] {
+        let out = quilon(&[command, source.to_str().unwrap()]);
+        assert_ne!(
+            out.code, 0,
+            "`quilon {command}` must refuse an `expect` outside a test:\n{}",
+            out.stdout
+        );
+        assert!(
+            out.stderr.contains("in a `describe` block") && out.stderr.contains("`assert`"),
+            "the diagnostic must point at `assert`:\n{}",
+            out.stderr
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// An `expect` in a `describe` body but OUTSIDE any `it` has no case to mark: `it` is what
+/// closes a case and tallies it, so such an `expect` would print a failure that no summary
+/// counts — and would poison the next case, whose assertions the mark then skips. Refused at
+/// compile time instead.
+#[test]
+fn expect_outside_an_it_case_is_a_compile_error() {
+    let dir = work_dir("expect_no_case");
+    let source = write(
+        &dir,
+        "suite.qn",
+        concat!(
+            "<< core.test.report\n",
+            "describe(\"g\", () => <\n",
+            "  expect(1, equals(2))\n",
+            "  it(\"unaffected\", () => expect(1, equals(1)))\n",
+            ">)\n"
+        ),
+    );
+    let out = quilon(&["test", source.to_str().unwrap()]);
+    assert_ne!(
+        out.code, 0,
+        "an `expect` with no case to mark must be refused:\n{}",
+        out.stdout
+    );
+    assert!(
+        out.stderr.contains("only works inside an `it` case"),
+        "the diagnostic must name the case:\n{}",
+        out.stderr
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ── The reporter seam: the run's state, as named functions ──────────────────────────────
+
+/// The run's state is a `.qn` API, not a set of runtime symbol names: a reporter — or a case —
+/// reads how many cases have passed and failed and how deep the nesting is through
+/// `core.test`'s own functions, which `core.test.report` re-exports by importing it.
+#[test]
+fn the_run_state_is_readable_through_named_functions() {
+    let dir = work_dir("state");
+    let source = write(
+        &dir,
+        "suite.qn",
+        concat!(
+            "<< core.io\n",
+            "<< core.test.report\n",
+            "describe(\"outer\", () => <\n",
+            "  it(\"sits at depth 1\", () => expect(nestingDepth(), equals(1)))\n",
+            "  describe(\"inner\", () => <\n",
+            "    it(\"sits one deeper\", () => expect(nestingDepth(), equals(2)))\n",
+            "    it(\"counts the cases behind it\", () => <\n",
+            "      expect(casesPassed(), equals(2))\n",
+            "      expect(casesFailed(), equals(0))\n",
+            "    >)\n",
+            "  >)\n",
+            ">)\n"
+        ),
+    );
+
+    let out = quilon(&["test", source.to_str().unwrap()]);
+    assert_eq!(
+        out.code, 0,
+        "every case reads its own state correctly:\n{}\n{}",
+        out.stdout, out.stderr
+    );
+    assert!(
+        out.stdout.contains("3 passed, 0 failed"),
+        "unexpected summary:\n{}",
+        out.stdout
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The module split that makes a reporter replaceable, asserted on the corelib itself:
+/// `core.test` carries the state and the lifecycle and defines NONE of the names a reporter
+/// owns, while `core.test.report` defines all of them and names no registry primitive. The
+/// first half is what leaves `describe`/`it`/`report*` free for a suite to define; the second
+/// is what proves those names are reachable in `.qn`.
+#[test]
+fn the_corelib_split_leaves_the_reporter_names_free() {
+    let corelib = Path::new(env!("CARGO_MANIFEST_DIR")).join("corelib");
+    let toolkit = std::fs::read_to_string(corelib.join("test.qn")).expect("read corelib/test.qn");
+    let reporter =
+        std::fs::read_to_string(corelib.join("test/report.qn")).expect("read test/report.qn");
+
+    for provided in [
+        "casesPassed",
+        "casesFailed",
+        "nestingDepth",
+        "enterSuite",
+        "leaveSuite",
+        "caseFailing",
+        "finishCase",
+    ] {
+        assert!(
+            toolkit.contains(&format!(">> {provided} = ")),
+            "`core.test` must export `{provided}` for a harness to be written against it"
+        );
+    }
+    for owned in [
+        "describe",
+        "it",
+        "reportSuite",
+        "reportCase",
+        "reportSummary",
+    ] {
+        assert!(
+            !toolkit.contains(&format!(">> {owned} = ")),
+            "`core.test` must not export `{owned}` — a suite defining its own would collide"
+        );
+        assert!(
+            reporter.contains(&format!(">> {owned} = ")),
+            "`core.test.report` must export `{owned}`"
+        );
+    }
+    assert!(
+        !reporter.contains("__test_"),
+        "the shipped reporter must go through `core.test`, not the registry:\n{reporter}"
+    );
+}
+
+/// The whole point, end to end: a suite that imports `core.test` alone and defines its own
+/// `describe`, `it` and `report*` gets ITS output and none of the default's. `reportSummary` is
+/// bound by name, so the suite's is what ends the run and decides whether it passed — a
+/// non-zero return failing the suite, which `quilon test` reports as its own failure.
+#[test]
+fn a_suite_can_replace_the_reporter_entirely() {
+    let dir = work_dir("own_reporter");
+    let source = write(
+        &dir,
+        "suite.qn",
+        concat!(
+            "<< core.io\n",
+            "<< core.test\n",
+            "reportSuite = (name :: Text, depth :: Num) -> $ => print(\"GROUP `name`\")\n",
+            "reportCase = (name :: Text, depth :: Num, failed :: Bool) -> $ =>\n",
+            "  print(\"CASE `name` `failed ? \"BAD\" : \"GOOD\"`\")\n",
+            "reportSummary = () -> Num => <\n",
+            "  print(\"TOTAL `casesPassed()`/`casesFailed()`\")\n",
+            "  casesFailed() == 0 ? 0 : 7\n",
+            ">\n",
+            "describe = (name :: Text, body :: () -> $) -> $ => <\n",
+            "  reportSuite(name, enterSuite())\n",
+            "  body()\n",
+            "  leaveSuite()\n",
+            "  $\n",
+            ">\n",
+            "it = (name :: Text, body :: () -> $) -> $ => <\n",
+            "  body()\n",
+            "  failed = caseFailing()\n",
+            "  reportCase(name, finishCase(), failed)\n",
+            ">\n",
+            "describe(\"group\", () => <\n",
+            "  it(\"passes\", () => expect(1, equals(1)))\n",
+            "  it(\"fails\", () => expect(1, equals(2)))\n",
+            ">)\n"
+        ),
+    );
+
+    let out = quilon(&["test", source.to_str().unwrap()]);
+
+    // The suite's own summary decided the run failed: it returned non-zero, and `quilon test`
+    // turned that into a failing suite.
+    assert_ne!(
+        out.code, 0,
+        "the suite's `reportSummary` returned non-zero, so the run must fail:\n{}\n{}",
+        out.stdout, out.stderr
+    );
+    for line in [
+        "GROUP group",
+        "CASE passes GOOD",
+        "CASE fails BAD",
+        "TOTAL 1/1",
+    ] {
+        assert!(
+            out.stdout.contains(line),
+            "`{line}` is missing from the custom report:\n{}",
+            out.stdout
+        );
+    }
+    // And nothing of the default reporter: no ✓/✗ marks, no "N passed, M failed" tally.
+    for absent in ["✓", "✗", "passed,"] {
+        assert!(
+            !out.stdout.contains(absent),
+            "the default reporter still rendered `{absent}`:\n{}",
+            out.stdout
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The shipped demonstration of the same thing, so the documented example is a gate.
+#[test]
+fn the_custom_reporter_example_replaces_the_default() {
+    let suite = example("custom_test_reporter.qn");
+    let out = quilon(&["test", suite.to_str().unwrap()]);
+
+    assert_eq!(
+        out.code, 0,
+        "examples/custom_test_reporter.qn must pass:\n{}\n{}",
+        out.stdout, out.stderr
+    );
+    assert!(
+        out.stdout.contains("ok 1 - trims both ends") && out.stdout.contains("1..4"),
+        "the example's own reporter did not render:\n{}",
+        out.stdout
+    );
+    assert!(
+        !out.stdout.contains("passed,") && !out.stdout.contains("✓"),
+        "the default reporter leaked into the example's output:\n{}",
+        out.stdout
+    );
+}
+
+/// `assert` in a case is still FATAL: it ends the run where it failed rather than recording.
+/// That is the whole difference between the two entry points.
+#[test]
+fn an_assert_in_a_case_is_still_fatal() {
+    let dir = work_dir("fatal");
+    let source = write(
+        &dir,
+        "suite.qn",
+        concat!(
+            "<< core.test.report\n",
+            "describe(\"fatal\", () => <\n",
+            "  it(\"asserts\", () => assert(1, equals(2)))\n",
+            "  it(\"never reached\", () => expect(1, equals(1)))\n",
+            ">)\n"
+        ),
+    );
+    let out = quilon(&["test", source.to_str().unwrap()]);
+
+    assert_eq!(out.code, 101, "a failing `assert` exits 101");
+    assert!(
+        !out.stdout.contains("never reached") && !out.stdout.contains("passed,"),
+        "a fatal assert must end the run where it failed:\n{}",
+        out.stdout
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn a_directory_runs_every_suite_it_holds() {
     let dir = work_dir("dir");
@@ -375,8 +694,8 @@ fn a_directory_runs_every_suite_it_holds() {
         &dir,
         "mixed.qn",
         concat!(
-            "<< core.test\n",
-            "describe(\"mixed\", () => it(\"runs\", () => assert(true)))\n",
+            "<< core.test.report\n",
+            "describe(\"mixed\", () => it(\"runs\", () => expect(true, equals(true))))\n",
             "^ = () -> Num => 7\n"
         ),
     );
@@ -403,11 +722,10 @@ fn a_directory_runs_every_suite_it_holds() {
         out.stdout
     );
 
-    // The passing suite's total is its own — a process per suite is what keeps one suite's
-    // counts out of another's summary. The failing suite ran one case before it failed, and
-    // that count must not have landed here.
+    // Each suite's totals are its own — a process per suite is what keeps one suite's counts
+    // out of another's summary.
     assert!(
-        out.stdout.contains("4 cases passed"),
+        out.stdout.contains("4 passed, 0 failed") && out.stdout.contains("2 passed, 1 failed"),
         "one suite's totals leaked into another's summary:\n{}",
         out.stdout
     );
@@ -434,15 +752,16 @@ fn a_suite_that_does_not_compile_fails_the_run() {
     let source = write(
         &dir,
         "suite.qn",
-        "<< core.test\ndescribe(\"g\", () => assertEq(1, \"one\"))\n",
+        "<< core.test.report\ndescribe(\"g\", () => expect(1, equals(\"one\")))\n",
     );
     let out = quilon(&["test", source.to_str().unwrap()]);
     assert_ne!(out.code, 0, "a suite that fails to type-check must fail");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A suite with no `<< core.test` has no reporter, and says so at its own `describe` —
-/// rather than blaming the entry point the compiler synthesized, which has no location.
+/// A suite that imports neither `core.test.report` nor a reporter of its own has none at all,
+/// and is told so at its own `describe` — rather than at the entry point the compiler
+/// synthesized, which has no location — with the import that fixes it named.
 #[test]
 fn a_suite_without_a_reporter_is_reported_at_its_own_describe() {
     let dir = work_dir("noimport");
@@ -452,6 +771,11 @@ fn a_suite_without_a_reporter_is_reported_at_its_own_describe() {
     assert!(
         out.stderr.contains("suite.qn:2:") && out.stderr.contains("no test reporter"),
         "the diagnostic must point at the `describe` call:\n{}",
+        out.stderr
+    );
+    assert!(
+        out.stderr.contains("<< core.test.report"),
+        "the diagnostic must name the import that fixes it:\n{}",
         out.stderr
     );
     let _ = std::fs::remove_dir_all(&dir);
@@ -478,7 +802,7 @@ fn a_suite_that_does_not_parse_fails_the_run() {
     write(
         &dir,
         "suite.qn",
-        "<< core.test\ndescribe(\"g\", () => <<<\n",
+        "<< core.test.report\ndescribe(\"g\", () => <<<\n",
     );
     let out = quilon(&["test", dir.to_str().unwrap()]);
     assert_ne!(
@@ -499,10 +823,10 @@ fn a_module_with_exports_and_tests_but_no_entry_point_is_not_a_program() {
         &dir,
         "suite.qn",
         concat!(
-            "<< core.test\n",
+            "<< core.test.report\n",
             ">> double = (n :: Num) -> Num => n * 2\n",
             "describe(\"double\", () => <\n",
-            "  it(\"doubles\", () => assertEq(double(21), 42))\n",
+            "  it(\"doubles\", () => expect(double(21), equals(42)))\n",
             ">)\n"
         ),
     );
@@ -540,7 +864,7 @@ fn the_example_suite_passes() {
         out.stdout, out.stderr
     );
     assert!(
-        out.stdout.contains("cases passed"),
+        out.stdout.contains("passed, 0 failed"),
         "unexpected summary:\n{}",
         out.stdout
     );
@@ -593,7 +917,12 @@ fn the_shipped_example_runs_its_tests_under_quilon_test() {
         "`quilon test` called the example's own `^`:\n{}",
         out.stdout
     );
-    for expected in ["slugify", "wordCount", "the erased block", "4 cases passed"] {
+    for expected in [
+        "slugify",
+        "wordCount",
+        "the erased block",
+        "4 passed, 0 failed",
+    ] {
         assert!(
             out.stdout.contains(expected),
             "`{expected}` is missing from the report:\n{}",
